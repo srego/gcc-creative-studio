@@ -20,137 +20,207 @@
     <!-- Left Column: Input & Configuration -->
     <div class="lg:col-span-7 flex flex-col gap-6">
 
-      <!-- Section 1: Video Input Header -->
-      <div class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl relative overflow-hidden">
-        <h2 class="text-lg font-semibold mb-4 flex items-center gap-2 text-white">
-          <mat-icon class="text-blue-400">video_library</mat-icon>
-          Source Media Input
-        </h2>
+      <!-- Section 1: Source Media Input with 3 Tabs -->
+      <div class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl relative overflow-hidden flex flex-col gap-5">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold flex items-center gap-2 text-white">
+            <mat-icon class="text-blue-400">video_library</mat-icon>
+            Source Media Input
+          </h2>
+          <span class="text-xs text-neutral-400 font-medium">Select 1 source</span>
+        </div>
 
-        <!-- Drag & Drop Zone -->
-        <div
-          (dragover)="onDragOver($event)"
-          (dragleave)="onDragLeave($event)"
-          (drop)="onDrop($event)"
-          [ngClass]="{'border-indigo-500 bg-indigo-500/10': isDraggingOver()}"
-          class="border-2 border-dashed border-neutral-600 hover:border-neutral-400 rounded-xl p-8 text-center transition-all duration-200 flex flex-col items-center justify-center gap-3 cursor-pointer group bg-neutral-900/40 relative"
-        >
-          <input
-            type="file"
-            accept="video/*,audio/*"
-            (change)="onFileSelected($event)"
-            class="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
-          />
+        <!-- Navigation Tabs -->
+        <div class="flex p-1 bg-neutral-900/80 border border-neutral-800 rounded-xl">
+          <button
+            (click)="setActiveTab('upload')"
+            [ngClass]="activeTab() === 'upload' ? 'bg-indigo-600 text-white shadow-md' : 'text-neutral-400 hover:text-white'"
+            class="flex-1 py-2.5 px-3 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-2"
+          >
+            <mat-icon class="text-base">cloud_upload</mat-icon>
+            Upload File
+          </button>
 
-          <div class="w-12 h-12 rounded-full bg-neutral-800 flex items-center justify-center text-neutral-400 group-hover:scale-110 group-hover:text-white transition-all">
-            <mat-icon class="text-2xl">cloud_upload</mat-icon>
+          <button
+            (click)="setActiveTab('gallery')"
+            [ngClass]="activeTab() === 'gallery' ? 'bg-indigo-600 text-white shadow-md' : 'text-neutral-400 hover:text-white'"
+            class="flex-1 py-2.5 px-3 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-2"
+          >
+            <mat-icon class="text-base">collections</mat-icon>
+            Media Gallery
+          </button>
+
+          <button
+            (click)="setActiveTab('url')"
+            [ngClass]="activeTab() === 'url' ? 'bg-indigo-600 text-white shadow-md' : 'text-neutral-400 hover:text-white'"
+            class="flex-1 py-2.5 px-3 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-2"
+          >
+            <mat-icon class="text-base">link</mat-icon>
+            Web / YouTube URL
+          </button>
+        </div>
+
+        <!-- Tab 1: Upload File -->
+        <div *ngIf="activeTab() === 'upload'">
+          <div
+            (dragover)="onDragOver($event)"
+            (dragleave)="onDragLeave($event)"
+            (drop)="onDrop($event)"
+            [ngClass]="{'border-indigo-500 bg-indigo-500/10': isDraggingOver()}"
+            class="border-2 border-dashed border-neutral-700 hover:border-neutral-500 rounded-xl p-8 text-center transition-all duration-200 flex flex-col items-center justify-center gap-3 cursor-pointer bg-neutral-900/40 relative"
+          >
+            <input
+              type="file"
+              accept="video/*,audio/*"
+              (change)="onFileSelected($event)"
+              class="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
+            />
+
+            <div class="w-12 h-12 rounded-full bg-neutral-800 flex items-center justify-center text-neutral-400 group-hover:scale-110 group-hover:text-white transition-all">
+              <mat-icon class="text-2xl">cloud_upload</mat-icon>
+            </div>
+
+            <div *ngIf="!selectedFile()">
+              <p class="text-sm font-medium text-neutral-200">
+                Drag & drop source video/audio here, or <span class="text-indigo-400 underline">browse file</span>
+              </p>
+              <p class="text-xs text-neutral-500 mt-1">Supports MP4, MOV, WEBM, MP3, WAV (Up to 500MB)</p>
+            </div>
+
+            <div *ngIf="selectedFile()" class="flex items-center gap-3 bg-indigo-950/60 border border-indigo-500/30 px-4 py-2 rounded-lg z-20">
+              <mat-icon class="text-indigo-400">movie</mat-icon>
+              <span class="text-sm font-medium text-neutral-100 truncate max-w-xs">{{ selectedFile()?.name }}</span>
+              <button (click)="clearSelection()" class="text-neutral-400 hover:text-red-400 transition-colors">
+                <mat-icon class="text-lg">close</mat-icon>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Select from Media Gallery -->
+        <div *ngIf="activeTab() === 'gallery'" class="flex flex-col gap-3">
+          <p class="text-xs text-neutral-400">Select an existing video asset from your Creative Studio Media Gallery:</p>
+          <div class="grid grid-cols-1 gap-2.5">
+            <div
+              *ngFor="let asset of galleryAssets"
+              (click)="selectGalleryAsset(asset)"
+              [ngClass]="selectedGalleryAsset()?.id === asset.id ? 'bg-indigo-950/80 border-indigo-500 text-white' : 'bg-neutral-900/60 border-neutral-800 text-neutral-300 hover:border-neutral-700'"
+              class="p-3.5 border rounded-xl flex items-center justify-between cursor-pointer transition-all"
+            >
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-neutral-800 flex items-center justify-center text-indigo-400">
+                  <mat-icon>video_file</mat-icon>
+                </div>
+                <div>
+                  <p class="text-xs font-semibold">{{ asset.title }}</p>
+                  <p class="text-[10px] text-neutral-500">Creative Studio Gallery Asset</p>
+                </div>
+              </div>
+              <mat-icon *ngIf="selectedGalleryAsset()?.id === asset.id" class="text-indigo-400">check_circle</mat-icon>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 3: Web / YouTube URL with Disclaimer Badge -->
+        <div *ngIf="activeTab() === 'url'" class="flex flex-col gap-3">
+          <div class="relative">
+            <mat-icon class="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400">link</mat-icon>
+            <input
+              type="text"
+              [value]="videoUrl()"
+              (input)="onUrlChange($any($event.target).value)"
+              placeholder="Paste YouTube or public video URL..."
+              class="w-full bg-neutral-900/60 border border-neutral-700/70 rounded-xl pl-10 pr-4 py-3 text-sm text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+            />
           </div>
 
-          <div *ngIf="!selectedFile()">
-            <p class="text-sm font-medium text-neutral-200">
-              Drag & drop source video/audio here, or <span class="text-indigo-400 underline">browse file</span>
+          <!-- YouTube Disclaimer Badge -->
+          <div class="p-3 rounded-xl bg-amber-950/30 border border-amber-500/20 flex items-start gap-2.5 text-amber-300/90 text-xs">
+            <mat-icon class="text-amber-400 text-base mt-0.5">info</mat-icon>
+            <p>
+              <strong>Note:</strong> External stream fetching depends on YouTube public accessibility. For maximum reliability, upload directly or select from your Media Gallery.
             </p>
-            <p class="text-xs text-neutral-500 mt-1">Supports MP4, MOV, WEBM, MP3, WAV (Up to 500MB)</p>
           </div>
-
-          <div *ngIf="selectedFile()" class="flex items-center gap-3 bg-indigo-950/60 border border-indigo-500/30 px-4 py-2 rounded-lg z-20">
-            <mat-icon class="text-indigo-400">movie</mat-icon>
-            <span class="text-sm font-medium text-neutral-100 truncate max-w-xs">{{ selectedFile()?.name }}</span>
-            <button (click)="clearSelection()" class="text-neutral-400 hover:text-red-400 transition-colors">
-              <mat-icon class="text-lg">close</mat-icon>
-            </button>
-          </div>
-        </div>
-
-        <!-- Divider -->
-        <div class="flex items-center gap-4 my-4">
-          <div class="flex-1 h-px bg-neutral-800"></div>
-          <span class="text-xs font-semibold text-neutral-500 uppercase tracking-wider">OR</span>
-          <div class="flex-1 h-px bg-neutral-800"></div>
-        </div>
-
-        <!-- YouTube Link Input -->
-        <div class="relative">
-          <mat-icon class="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400">link</mat-icon>
-          <input
-            type="text"
-            [value]="youtubeUrl()"
-            (input)="onYoutubeUrlChange($any($event.target).value)"
-            placeholder="Paste YouTube or video URL..."
-            class="w-full bg-neutral-900/60 border border-neutral-700/70 rounded-xl pl-10 pr-4 py-3 text-sm text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
-          />
         </div>
       </div>
 
-      <!-- Section 2: Subtitle Options Panel -->
+      <!-- Section 2: Subtitle Configuration & Output Options -->
       <div class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col gap-6">
         <h2 class="text-lg font-semibold flex items-center gap-2 text-white">
           <mat-icon class="text-purple-400">tune</mat-icon>
           Subtitle Configuration
         </h2>
 
-        <!-- Subtitle Format Selector -->
+        <!-- Package Name Input -->
         <div>
-          <label class="block text-xs font-medium text-neutral-400 mb-2 uppercase tracking-wider">Output Format</label>
-          <div class="flex gap-3">
-            <button
-              (click)="setFormat('vtt')"
-              [ngClass]="subtitleFormat() === 'vtt' ? 'bg-gradient-to-r from-indigo-600 to-purple-600 border-indigo-400' : 'bg-neutral-900/60 border-neutral-700'"
-              class="flex-1 py-3 px-4 rounded-xl border text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-sm"
-            >
-              <mat-icon class="text-sm">description</mat-icon>
-              WebVTT (.vtt)
-            </button>
+          <label class="block text-xs font-medium text-neutral-400 mb-2 uppercase tracking-wider">
+            Package / Bundle Name <span class="text-neutral-500 font-normal normal-case">(Preserves exact characters & formatting)</span>
+          </label>
+          <input
+            type="text"
+            [value]="packageName()"
+            (input)="packageName.set($any($event.target).value)"
+            placeholder="Enter package name (e.g. Podcast Ep 10 Subtitles [EN])"
+            class="w-full bg-neutral-900/60 border border-neutral-700/70 rounded-xl px-4 py-3 text-sm text-neutral-200 focus:outline-none focus:border-indigo-500 transition-colors"
+          />
+        </div>
 
-            <button
-              (click)="setFormat('srt')"
-              [ngClass]="subtitleFormat() === 'srt' ? 'bg-gradient-to-r from-indigo-600 to-purple-600 border-indigo-400' : 'bg-neutral-900/60 border-neutral-700'"
-              class="flex-1 py-3 px-4 rounded-xl border text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-sm"
+        <!-- Output Options Multi-Select Checkboxes -->
+        <div>
+          <label class="block text-xs font-medium text-neutral-400 mb-2 uppercase tracking-wider">
+            Output Types <span class="text-neutral-500 font-normal normal-case">(Select at least one)</span>
+          </label>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <!-- Option 1: Dynamic Subtitles -->
+            <div
+              (click)="toggleDynamicSubtitles()"
+              [ngClass]="enableDynamicSubtitles() ? 'border-indigo-500 bg-indigo-950/40' : 'border-neutral-800 bg-neutral-900/40'"
+              class="p-4 rounded-xl border flex items-start gap-3 cursor-pointer transition-all"
             >
-              <mat-icon class="text-sm">subtitles</mat-icon>
-              SubRip (.srt)
-            </button>
+              <div
+                [ngClass]="enableDynamicSubtitles() ? 'bg-indigo-600 border-indigo-500' : 'bg-neutral-800 border-neutral-700'"
+                class="w-5 h-5 rounded border flex items-center justify-center mt-0.5 transition-colors"
+              >
+                <mat-icon *ngIf="enableDynamicSubtitles()" class="text-white text-xs">check</mat-icon>
+              </div>
+              <div>
+                <p class="text-xs font-semibold text-neutral-100">Dynamic Subtitles (Soft)</p>
+                <p class="text-[10px] text-neutral-400 mt-0.5">Generates both <strong>.vtt</strong> and <strong>.srt</strong> caption files.</p>
+              </div>
+            </div>
+
+            <!-- Option 2: Burned-In Video -->
+            <div
+              (click)="toggleBurnedInVideo()"
+              [ngClass]="enableBurnedInVideo() ? 'border-purple-500 bg-purple-950/40' : 'border-neutral-800 bg-neutral-900/40'"
+              class="p-4 rounded-xl border flex items-start gap-3 cursor-pointer transition-all"
+            >
+              <div
+                [ngClass]="enableBurnedInVideo() ? 'bg-purple-600 border-purple-500' : 'bg-neutral-800 border-neutral-700'"
+                class="w-5 h-5 rounded border flex items-center justify-center mt-0.5 transition-colors"
+              >
+                <mat-icon *ngIf="enableBurnedInVideo()" class="text-white text-xs">check</mat-icon>
+              </div>
+              <div>
+                <p class="text-xs font-semibold text-neutral-100">Burned-In Video (Static)</p>
+                <p class="text-[10px] text-neutral-400 mt-0.5">Renders captions directly onto video frames (.mp4).</p>
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- Language Selector & Burn-in Toggle Grid -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <!-- Language Selector -->
-          <div>
-            <label class="block text-xs font-medium text-neutral-400 mb-2 uppercase tracking-wider">Audio Language</label>
-            <select
-              [value]="sourceLanguage()"
-              (change)="setLanguage($any($event.target).value)"
-              class="w-full bg-neutral-900/60 border border-neutral-700/70 rounded-xl px-4 py-3 text-sm text-neutral-200 focus:outline-none focus:border-indigo-500 transition-colors"
-            >
-              <option *ngFor="let lang of availableLanguages" [value]="lang.code" class="bg-neutral-900 text-white">
-                {{ lang.label }}
-              </option>
-            </select>
-          </div>
-
-          <!-- Hardburned Overlay Toggle -->
-          <div>
-            <label class="block text-xs font-medium text-neutral-400 mb-2 uppercase tracking-wider">Subtitles Rendering</label>
-            <button
-              (click)="toggleBurnSubtitles()"
-              class="w-full py-3 px-4 rounded-xl border border-neutral-700/70 bg-neutral-900/60 text-sm font-medium flex items-center justify-between transition-all hover:border-neutral-500"
-            >
-              <span class="flex items-center gap-2 text-neutral-200">
-                <mat-icon [ngClass]="burnSubtitles() ? 'text-indigo-400' : 'text-neutral-400'">layers</mat-icon>
-                {{ burnSubtitles() ? 'Hardburned Overlay' : 'Soft Subtitles Track' }}
-              </span>
-              <div
-                [ngClass]="burnSubtitles() ? 'bg-indigo-600' : 'bg-neutral-700'"
-                class="w-10 h-6 rounded-full p-1 transition-colors duration-200 ease-in-out relative"
-              >
-                <div
-                  [ngClass]="{'translate-x-4': burnSubtitles()}"
-                  class="w-4 h-4 rounded-full bg-white transition-transform duration-200 ease-in-out"
-                ></div>
-              </div>
-            </button>
-          </div>
+        <!-- Language Selector -->
+        <div>
+          <label class="block text-xs font-medium text-neutral-400 mb-2 uppercase tracking-wider">Audio Language</label>
+          <select
+            [value]="sourceLanguage()"
+            (change)="setLanguage($any($event.target).value)"
+            class="w-full bg-neutral-900/60 border border-neutral-700/70 rounded-xl px-4 py-3 text-sm text-neutral-200 focus:outline-none focus:border-indigo-500 transition-colors"
+          >
+            <option *ngFor="let lang of availableLanguages" [value]="lang.code" class="bg-neutral-900 text-white">
+              {{ lang.label }}
+            </option>
+          </select>
         </div>
       </div>
 
@@ -158,59 +228,38 @@
       <div class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col gap-4">
         <button
           (click)="startGeneration()"
-          [disabled]="!hasInput() || isProcessing()"
-          [ngClass]="{'opacity-50 cursor-not-allowed': !hasInput() || isProcessing()}"
+          [disabled]="!hasInput() || !hasValidOutput() || isProcessing()"
+          [ngClass]="{'opacity-50 cursor-not-allowed': !hasInput() || !hasValidOutput() || isProcessing()}"
           class="w-full py-4 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-semibold shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-3 group relative overflow-hidden"
         >
           <mat-icon *ngIf="!isProcessing()" class="group-hover:rotate-12 transition-transform">auto_awesome</mat-icon>
           <mat-icon *ngIf="isProcessing()" class="animate-spin">sync</mat-icon>
-          <span>{{ isProcessing() ? 'Generating Subtitles...' : 'Generate Subtitles' }}</span>
+          <span>{{ isProcessing() ? 'Generating Subtitle Package...' : 'Generate Subtitle Package' }}</span>
         </button>
 
-        <!-- Active Progress Bar & Indicators -->
+        <!-- Active Progress Bar -->
         <div *ngIf="processingStep() !== 'idle'" class="flex flex-col gap-3 mt-2">
           <div class="flex justify-between items-center text-xs font-semibold text-neutral-400 uppercase tracking-wider">
             <span>Status: <strong class="text-indigo-400 capitalize">{{ processingStep() }}</strong></span>
             <span>{{ progressPercentage() }}%</span>
           </div>
 
-          <!-- Progress Bar -->
           <div class="w-full h-2 bg-neutral-900 rounded-full overflow-hidden border border-white/5">
             <div
               class="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 transition-all duration-500 ease-out"
               [style.width.%]="progressPercentage()"
             ></div>
           </div>
-
-          <!-- Pipeline Steps Indicator -->
-          <div class="grid grid-cols-4 gap-2 text-center text-xs text-neutral-400 pt-1">
-            <div [ngClass]="{'text-indigo-400': processingStep() === 'uploading' || progressPercentage() >= 15}" class="flex flex-col items-center gap-1">
-              <mat-icon class="text-sm">cloud_upload</mat-icon>
-              <span>Upload</span>
-            </div>
-            <div [ngClass]="{'text-indigo-400': processingStep() === 'transcribing' || progressPercentage() >= 45}" class="flex flex-col items-center gap-1">
-              <mat-icon class="text-sm">graphic_eq</mat-icon>
-              <span>Transcribe</span>
-            </div>
-            <div [ngClass]="{'text-indigo-400': processingStep() === 'formatting' || progressPercentage() >= 75}" class="flex flex-col items-center gap-1">
-              <mat-icon class="text-sm">tune</mat-icon>
-              <span>Format</span>
-            </div>
-            <div [ngClass]="{'text-indigo-400': processingStep() === 'completed' || progressPercentage() === 100}" class="flex flex-col items-center gap-1">
-              <mat-icon class="text-sm">check_circle</mat-icon>
-              <span>Complete</span>
-            </div>
-          </div>
         </div>
       </div>
     </div>
 
-    <!-- Right Column: Preview & Output Card -->
+    <!-- Right Column: Preview & Output Deliverables Card -->
     <div class="lg:col-span-5 flex flex-col gap-6">
       <div class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col gap-6 h-full">
         <h2 class="text-lg font-semibold flex items-center gap-2 text-white">
           <mat-icon class="text-teal-400">preview</mat-icon>
-          Preview & Output
+          Preview & Deliverables
         </h2>
 
         <!-- Video Player Frame -->
@@ -227,50 +276,74 @@
             <p class="text-xs">No media preview loaded</p>
           </div>
 
-          <!-- Overlay Subtitle Mock Badge -->
           <div *ngIf="isComplete()" class="absolute bottom-12 inset-x-4 text-center pointer-events-none">
             <span class="bg-black/80 text-white font-medium px-4 py-1.5 rounded-md text-sm border border-white/10 backdrop-blur-md inline-block shadow-lg">
-              [Synced Subtitles Preview Output]
+              [{{ currentPackageDisplayName() }}]
             </span>
           </div>
         </div>
 
-        <!-- Output Downloads Section -->
+        <!-- Output Deliverables Section -->
         <div class="flex-1 flex flex-col justify-end gap-3 pt-4 border-t border-neutral-800">
-          <h3 class="text-xs font-semibold text-neutral-400 uppercase tracking-wider">Generated Subtitle Deliverables</h3>
+          <h3 class="text-xs font-semibold text-neutral-400 uppercase tracking-wider">Generated Package Deliverables</h3>
 
-          <div class="grid grid-cols-1 gap-3">
-            <a
-              [ngClass]="{'pointer-events-none opacity-50': !isComplete()}"
-              class="w-full py-3 px-4 rounded-xl bg-neutral-900/80 border border-neutral-700/80 hover:border-indigo-500 text-sm font-medium flex items-center justify-between text-neutral-200 transition-all cursor-pointer"
+          <div class="grid grid-cols-1 gap-2.5">
+            <!-- Dynamic Subtitles Deliverable -->
+            <div
+              *ngIf="enableDynamicSubtitles()"
+              [ngClass]="{'opacity-50 pointer-events-none': !isComplete()}"
+              class="p-3.5 rounded-xl bg-neutral-900/80 border border-neutral-800 flex items-center justify-between"
             >
               <div class="flex items-center gap-3">
                 <div class="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center text-indigo-400">
                   <mat-icon class="text-sm">description</mat-icon>
                 </div>
                 <div>
-                  <p class="text-xs font-semibold text-neutral-100">WebVTT File</p>
-                  <p class="text-[10px] text-neutral-400">Standard web video caption format (.vtt)</p>
+                  <p class="text-xs font-semibold text-neutral-100">Dynamic Captions (.vtt & .srt)</p>
+                  <p class="text-[10px] text-neutral-400">{{ currentPackageDisplayName() }}.vtt</p>
                 </div>
               </div>
-              <mat-icon class="text-indigo-400 text-lg">download</mat-icon>
-            </a>
+              <button [disabled]="!isComplete()" class="text-indigo-400 hover:text-indigo-300">
+                <mat-icon class="text-lg">download</mat-icon>
+              </button>
+            </div>
 
-            <a
-              [ngClass]="{'pointer-events-none opacity-50': !isComplete()}"
-              class="w-full py-3 px-4 rounded-xl bg-neutral-900/80 border border-neutral-700/80 hover:border-purple-500 text-sm font-medium flex items-center justify-between text-neutral-200 transition-all cursor-pointer"
+            <!-- Burned-In Video Deliverable -->
+            <div
+              *ngIf="enableBurnedInVideo()"
+              [ngClass]="{'opacity-50 pointer-events-none': !isComplete()}"
+              class="p-3.5 rounded-xl bg-neutral-900/80 border border-neutral-800 flex items-center justify-between"
             >
               <div class="flex items-center gap-3">
                 <div class="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center text-purple-400">
-                  <mat-icon class="text-sm">subtitles</mat-icon>
+                  <mat-icon class="text-sm">movie</mat-icon>
                 </div>
                 <div>
-                  <p class="text-xs font-semibold text-neutral-100">SubRip File</p>
-                  <p class="text-[10px] text-neutral-400">Universal video editor format (.srt)</p>
+                  <p class="text-xs font-semibold text-neutral-100">Burned-In Video (.mp4)</p>
+                  <p class="text-[10px] text-neutral-400">{{ currentPackageDisplayName() }} (Burned).mp4</p>
                 </div>
               </div>
-              <mat-icon class="text-purple-400 text-lg">download</mat-icon>
-            </a>
+              <button [disabled]="!isComplete()" class="text-purple-400 hover:text-purple-300">
+                <mat-icon class="text-lg">download</mat-icon>
+              </button>
+            </div>
+
+            <!-- Save to Media Gallery Folder Button -->
+            <button
+              (click)="saveToMediaGallery()"
+              [disabled]="!isComplete()"
+              [ngClass]="{'opacity-50 cursor-not-allowed': !isComplete(), 'bg-teal-600 hover:bg-teal-500': isComplete()}"
+              class="w-full py-3 px-4 rounded-xl bg-neutral-800 text-white font-semibold text-xs transition-all flex items-center justify-center gap-2 mt-1 shadow-md"
+            >
+              <mat-icon class="text-sm">folder_special</mat-icon>
+              <span>Save Complete Package Folder to Media Gallery</span>
+            </button>
+
+            <!-- Save Toast Notification -->
+            <div *ngIf="savedToGallery()" class="p-3 rounded-xl bg-teal-950/60 border border-teal-500/30 text-teal-200 text-xs flex items-center gap-2">
+              <mat-icon class="text-teal-400 text-base">check_circle</mat-icon>
+              <span>Saved <strong>"{{ savedPackageName() }}"</strong> package folder to Media Gallery!</span>
+            </div>
           </div>
         </div>
       </div>
