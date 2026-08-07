@@ -97,27 +97,40 @@
           </div>
         </div>
 
-        <!-- Tab 2: Select from Media Gallery -->
+        <!-- Tab 2: Select from Media Gallery via Full Standard Modal Dialog -->
         <div *ngIf="activeTab() === 'gallery'" class="flex flex-col gap-3">
-          <p class="text-xs text-neutral-400">Select an existing video asset from your Creative Studio Media Gallery:</p>
-          <div class="grid grid-cols-1 gap-2.5">
-            <div
-              *ngFor="let asset of galleryAssets"
-              (click)="selectGalleryAsset(asset)"
-              [ngClass]="selectedGalleryAsset()?.id === asset.id ? 'bg-indigo-950/80 border-indigo-500 text-white' : 'bg-neutral-900/60 border-neutral-800 text-neutral-300 hover:border-neutral-700'"
-              class="p-3.5 border rounded-xl flex items-center justify-between cursor-pointer transition-all"
+          <!-- Button to trigger full Creative Studio Media Gallery Modal -->
+          <div *ngIf="!selectedGalleryAsset()">
+            <button
+              (click)="openGallerySelector()"
+              class="w-full py-8 border-2 border-dashed border-neutral-700 hover:border-indigo-500 rounded-xl bg-neutral-900/40 hover:bg-indigo-500/5 transition-all flex flex-col items-center justify-center gap-3 group"
             >
-              <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-lg bg-neutral-800 flex items-center justify-center text-indigo-400">
-                  <mat-icon>video_file</mat-icon>
-                </div>
-                <div>
-                  <p class="text-xs font-semibold">{{ asset.title }}</p>
-                  <p class="text-[10px] text-neutral-500">Creative Studio Gallery Asset</p>
-                </div>
+              <div class="w-12 h-12 rounded-full bg-neutral-800 flex items-center justify-center text-indigo-400 group-hover:scale-110 transition-transform">
+                <mat-icon class="text-2xl">collections</mat-icon>
               </div>
-              <mat-icon *ngIf="selectedGalleryAsset()?.id === asset.id" class="text-indigo-400">check_circle</mat-icon>
+              <p class="text-sm font-semibold text-neutral-200">Browse & Select from Media Gallery</p>
+              <p class="text-xs text-neutral-400">Opens the full Creative Studio media asset selector</p>
+            </button>
+          </div>
+
+          <!-- Selected Gallery Asset Display Card -->
+          <div *ngIf="selectedGalleryAsset()" class="p-4 bg-indigo-950/60 border border-indigo-500/40 rounded-xl flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-lg bg-indigo-600/30 flex items-center justify-center text-indigo-400">
+                <mat-icon>movie</mat-icon>
+              </div>
+              <div>
+                <p class="text-sm font-semibold text-white">{{ selectedGalleryAsset()?.title }}</p>
+                <p class="text-xs text-indigo-300">Selected from Creative Studio Media Gallery</p>
+              </div>
             </div>
+            <button
+              (click)="openGallerySelector()"
+              class="px-3 py-1.5 rounded-lg bg-indigo-600/40 hover:bg-indigo-600 text-xs font-semibold text-indigo-200 hover:text-white transition-all flex items-center gap-1.5"
+            >
+              <mat-icon class="text-sm">sync</mat-icon>
+              Change Media
+            </button>
           </div>
         </div>
 
@@ -151,16 +164,16 @@
           Subtitle Configuration
         </h2>
 
-        <!-- Package Name Input -->
+        <!-- Folder Name Input -->
         <div>
           <label class="block text-xs font-medium text-neutral-400 mb-2 uppercase tracking-wider">
-            Package / Bundle Name <span class="text-neutral-500 font-normal normal-case">(Preserves exact characters & formatting)</span>
+            Folder Name <span class="text-neutral-500 font-normal normal-case">(choose a name for the folder to house files)</span>
           </label>
           <input
             type="text"
             [value]="packageName()"
             (input)="packageName.set($any($event.target).value)"
-            placeholder="Enter package name (e.g. Podcast Ep 10 Subtitles [EN])"
+            placeholder="Enter folder name (e.g., Podcast Ep 10 Subtitles [EN])"
             class="w-full bg-neutral-900/60 border border-neutral-700/70 rounded-xl px-4 py-3 text-sm text-neutral-200 focus:outline-none focus:border-indigo-500 transition-colors"
           />
         </div>
@@ -170,7 +183,7 @@
           <label class="block text-xs font-medium text-neutral-400 mb-2 uppercase tracking-wider">
             Output Types <span class="text-neutral-500 font-normal normal-case">(Select at least one)</span>
           </label>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <!-- Option 1: Dynamic Subtitles -->
             <div
               (click)="toggleDynamicSubtitles()"
@@ -179,7 +192,7 @@
             >
               <div
                 [ngClass]="enableDynamicSubtitles() ? 'bg-indigo-600 border-indigo-500' : 'bg-neutral-800 border-neutral-700'"
-                class="w-5 h-5 rounded border flex items-center justify-center mt-0.5 transition-colors"
+                class="w-5 h-5 rounded border flex items-center justify-center mt-0.5 transition-colors shrink-0"
               >
                 <mat-icon *ngIf="enableDynamicSubtitles()" class="text-white text-xs">check</mat-icon>
               </div>
@@ -189,21 +202,29 @@
               </div>
             </div>
 
-            <!-- Option 2: Burned-In Video -->
+            <!-- Option 2: Burned-In Video with Processing Warning -->
             <div
               (click)="toggleBurnedInVideo()"
               [ngClass]="enableBurnedInVideo() ? 'border-purple-500 bg-purple-950/40' : 'border-neutral-800 bg-neutral-900/40'"
-              class="p-4 rounded-xl border flex items-start gap-3 cursor-pointer transition-all"
+              class="p-4 rounded-xl border flex flex-col gap-2 cursor-pointer transition-all"
             >
-              <div
-                [ngClass]="enableBurnedInVideo() ? 'bg-purple-600 border-purple-500' : 'bg-neutral-800 border-neutral-700'"
-                class="w-5 h-5 rounded border flex items-center justify-center mt-0.5 transition-colors"
-              >
-                <mat-icon *ngIf="enableBurnedInVideo()" class="text-white text-xs">check</mat-icon>
+              <div class="flex items-start gap-3">
+                <div
+                  [ngClass]="enableBurnedInVideo() ? 'bg-purple-600 border-purple-500' : 'bg-neutral-800 border-neutral-700'"
+                  class="w-5 h-5 rounded border flex items-center justify-center mt-0.5 transition-colors shrink-0"
+                >
+                  <mat-icon *ngIf="enableBurnedInVideo()" class="text-white text-xs">check</mat-icon>
+                </div>
+                <div>
+                  <p class="text-xs font-semibold text-neutral-100">Burned-In Video (Static)</p>
+                  <p class="text-[10px] text-neutral-400 mt-0.5">Renders captions directly onto video frames (.mp4).</p>
+                </div>
               </div>
-              <div>
-                <p class="text-xs font-semibold text-neutral-100">Burned-In Video (Static)</p>
-                <p class="text-[10px] text-neutral-400 mt-0.5">Renders captions directly onto video frames (.mp4).</p>
+
+              <!-- Warning Note for Burned-in Video -->
+              <div class="p-2.5 rounded-lg bg-amber-950/40 border border-amber-500/30 text-amber-300/90 text-[11px] flex items-start gap-2 mt-1">
+                <mat-icon class="text-amber-400 text-sm mt-0.5 shrink-0">warning</mat-icon>
+                <span>Note: Burning subtitles directly onto video frames requires video re-encoding and may take longer to process.</span>
               </div>
             </div>
           </div>

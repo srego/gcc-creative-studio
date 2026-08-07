@@ -15,6 +15,8 @@
  */
 
 import {Component, signal, computed} from '@angular/core';
+import {MatDialog} from '@angular/material/dialog';
+import {ImageSelectorComponent} from '../../common/components/image-selector/image-selector.component';
 
 export type InputSourceTab = 'upload' | 'gallery' | 'url';
 
@@ -24,6 +26,8 @@ export type InputSourceTab = 'upload' | 'gallery' | 'url';
   styleUrls: ['./subtitles.component.scss'],
 })
 export class SubtitlesComponent {
+  constructor(private dialog: MatDialog) {}
+
   // Navigation & Input Signals
   readonly activeTab = signal<InputSourceTab>('upload');
   readonly selectedFile = signal<File | null>(null);
@@ -47,13 +51,6 @@ export class SubtitlesComponent {
   readonly previewVideoUrl = signal<string | null>(null);
   readonly savedToGallery = signal<boolean>(false);
   readonly savedPackageName = signal<string>('');
-
-  // Mock Gallery Assets for Selection
-  readonly galleryAssets = [
-    {id: 'asset-1', title: 'Product Showcase Promo Video.mp4', url: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'},
-    {id: 'asset-2', title: 'Podcast Episode 10 - Tech Insights.mp4', url: 'https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'},
-    {id: 'asset-3', title: 'Brand Guidelines Animation Overview.mp4', url: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4'},
-  ];
 
   readonly availableLanguages = [
     {code: 'en-US', label: 'English (US)'},
@@ -108,6 +105,42 @@ export class SubtitlesComponent {
       this.videoUrl.set('');
       this.updateDefaultPackageName(file.name);
     }
+  }
+
+  openGallerySelector(): void {
+    const dialogRef = this.dialog.open(ImageSelectorComponent, {
+      width: '90vw',
+      height: '80vh',
+      maxWidth: '90vw',
+      data: {
+        mimeType: 'video/*',
+        showFooter: true,
+        maxSelection: 1,
+      },
+      panelClass: 'image-selector-dialog',
+    });
+
+    dialogRef.afterClosed().subscribe((result: any) => {
+      if (result) {
+        let title = 'Selected Gallery Asset';
+        let url = '';
+        if ('original_filename' in result) {
+          title = result.original_filename;
+          url = result.gcs_uri || '';
+        } else if ('mediaItem' in result) {
+          title = result.mediaItem.title || result.mediaItem.filename || 'Gallery Video';
+          url = result.mediaItem.gcs_uri || result.mediaItem.url || '';
+        } else if (typeof result === 'object' && result.title) {
+          title = result.title;
+          url = result.url || result.gcs_uri || '';
+        }
+        this.selectGalleryAsset({
+          id: result.id || 'gallery-selected',
+          title: title || 'Media Gallery Video',
+          url: url || 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+        });
+      }
+    });
   }
 
   selectGalleryAsset(asset: {id: string; title: string; url: string}): void {
