@@ -31,11 +31,12 @@ import {WorkflowEditorComponent} from './workflows/workflow-editor/workflow-edit
 import {WorkflowListComponent} from './workflows/workflow-list/workflow-list.component';
 import {WorkbenchComponent} from './workbench/workbench.component';
 import {UpscaleComponent} from './upscale/upscale.component';
+import {SubtitlesComponent} from './custom/subtitles/subtitles.component';
 import {UserRolesEnum} from './common/models/user.model';
 
 const routes: Routes = [
   {path: 'login', component: LoginComponent},
-  {path: '', component: HomeComponent, canActivate: [AuthGuardService]},
+  {path: '', component: HomeComponent, pathMatch: 'full', canActivate: [AuthGuardService]},
   {
     path: 'fun-templates',
     component: FunTemplatesComponent,
@@ -44,6 +45,11 @@ const routes: Routes = [
   {path: 'video', component: VideoComponent, canActivate: [AuthGuardService]},
   {path: 'vto', component: VtoComponent, canActivate: [AuthGuardService]},
   {path: 'audio', component: AudioComponent, canActivate: [AuthGuardService]},
+  {
+    path: 'custom/subtitles',
+    component: SubtitlesComponent,
+    canActivate: [AuthGuardService],
+  },
   {
     path: 'workbench',
     component: WorkbenchComponent,

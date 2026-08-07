@@ -20,7 +20,6 @@ import {UserModel, UserRolesEnum} from '../models/user.model';
 import {HttpClient, HttpHeaders, HttpErrorResponse} from '@angular/common/http';
 import {environment} from '../../../environments/environment';
 import {Auth, IdTokenResult} from '@angular/fire/auth';
-import {UserService} from '../services/user.service';
 import {
   GoogleAuthProvider,
   signInWithPopup,
@@ -58,7 +57,6 @@ export class AuthService {
   constructor(
     private router: Router,
     private httpClient: HttpClient,
-    private userService: UserService,
   ) {
     this.provider.setCustomParameters({
       // Set custom params for the provider
@@ -298,6 +296,23 @@ export class AuthService {
   isLoggedIn() {
     if (!isPlatformBrowser(this.platformId)) return false;
 
+    // In local development mode, automatically provide a mock local session
+    if (environment?.isLocal) {
+      if (!localStorage.getItem('USER_DETAILS')) {
+        const localUser: UserModel = {
+          id: 'local-dev-user-001',
+          name: 'Local Developer',
+          email: 'dev@local.internal',
+          picture: '',
+          roles: [UserRolesEnum.ADMIN, UserRolesEnum.WORKFLOWS],
+        };
+        localStorage.setItem('USER_DETAILS', JSON.stringify(localUser));
+      }
+      this.firebaseIdToken = 'mock-local-dev-token';
+      this.firebaseTokenExpiry = Date.now() + 864000000; // 10 days
+      return true;
+    }
+
     // Check if the in-memory token is valid
     const now = Date.now();
     const isTokenValid = !!(
@@ -337,17 +352,23 @@ export class AuthService {
     return isUserLoggedIn;
   }
 
+  private getUserDetails(): UserModel | null {
+    if (!isPlatformBrowser(this.platformId)) return null;
+    const userObj = localStorage.getItem('USER_DETAILS');
+    return userObj ? (JSON.parse(userObj) as UserModel) : null;
+  }
+
   isUserAdmin() {
     if (!isPlatformBrowser(this.platformId)) return false;
 
-    const user_role = this.userService.getUserDetails()?.roles;
+    const user_role = this.getUserDetails()?.roles;
     return user_role?.includes(UserRolesEnum.ADMIN) || false;
   }
 
   isUserWorkflows() {
     if (!isPlatformBrowser(this.platformId)) return false;
 
-    const user_role = this.userService.getUserDetails()?.roles;
+    const user_role = this.getUserDetails()?.roles;
     return user_role?.includes(UserRolesEnum.WORKFLOWS) || false;
   }
 

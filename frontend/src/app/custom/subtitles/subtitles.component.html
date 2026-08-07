@@ -1,0 +1,279 @@
+<div class="min-h-screen p-6 md:p-10 text-neutral-100 flex flex-col gap-8 max-w-7xl mx-auto">
+  <!-- Page Header -->
+  <div class="flex items-center gap-4">
+    <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-500 p-0.5 shadow-lg shadow-indigo-500/20">
+      <div class="w-full h-full bg-neutral-900/80 backdrop-blur-xl rounded-[14px] flex items-center justify-center">
+        <mat-icon class="text-indigo-400 text-3xl">subtitles</mat-icon>
+      </div>
+    </div>
+    <div>
+      <h1 class="text-3xl font-bold tracking-tight bg-gradient-to-r from-white via-neutral-200 to-neutral-400 bg-clip-text text-transparent">
+        Video Subtitles Studio
+      </h1>
+      <p class="text-sm text-neutral-400 mt-1">
+        Generate, format, and overlay synchronized multi-language subtitles for video and audio content.
+      </p>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+    <!-- Left Column: Input & Configuration -->
+    <div class="lg:col-span-7 flex flex-col gap-6">
+
+      <!-- Section 1: Video Input Header -->
+      <div class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+        <h2 class="text-lg font-semibold mb-4 flex items-center gap-2 text-white">
+          <mat-icon class="text-blue-400">video_library</mat-icon>
+          Source Media Input
+        </h2>
+
+        <!-- Drag & Drop Zone -->
+        <div
+          (dragover)="onDragOver($event)"
+          (dragleave)="onDragLeave($event)"
+          (drop)="onDrop($event)"
+          [ngClass]="{'border-indigo-500 bg-indigo-500/10': isDraggingOver()}"
+          class="border-2 border-dashed border-neutral-600 hover:border-neutral-400 rounded-xl p-8 text-center transition-all duration-200 flex flex-col items-center justify-center gap-3 cursor-pointer group bg-neutral-900/40 relative"
+        >
+          <input
+            type="file"
+            accept="video/*,audio/*"
+            (change)="onFileSelected($event)"
+            class="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
+          />
+
+          <div class="w-12 h-12 rounded-full bg-neutral-800 flex items-center justify-center text-neutral-400 group-hover:scale-110 group-hover:text-white transition-all">
+            <mat-icon class="text-2xl">cloud_upload</mat-icon>
+          </div>
+
+          <div *ngIf="!selectedFile()">
+            <p class="text-sm font-medium text-neutral-200">
+              Drag & drop source video/audio here, or <span class="text-indigo-400 underline">browse file</span>
+            </p>
+            <p class="text-xs text-neutral-500 mt-1">Supports MP4, MOV, WEBM, MP3, WAV (Up to 500MB)</p>
+          </div>
+
+          <div *ngIf="selectedFile()" class="flex items-center gap-3 bg-indigo-950/60 border border-indigo-500/30 px-4 py-2 rounded-lg z-20">
+            <mat-icon class="text-indigo-400">movie</mat-icon>
+            <span class="text-sm font-medium text-neutral-100 truncate max-w-xs">{{ selectedFile()?.name }}</span>
+            <button (click)="clearSelection()" class="text-neutral-400 hover:text-red-400 transition-colors">
+              <mat-icon class="text-lg">close</mat-icon>
+            </button>
+          </div>
+        </div>
+
+        <!-- Divider -->
+        <div class="flex items-center gap-4 my-4">
+          <div class="flex-1 h-px bg-neutral-800"></div>
+          <span class="text-xs font-semibold text-neutral-500 uppercase tracking-wider">OR</span>
+          <div class="flex-1 h-px bg-neutral-800"></div>
+        </div>
+
+        <!-- YouTube Link Input -->
+        <div class="relative">
+          <mat-icon class="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400">link</mat-icon>
+          <input
+            type="text"
+            [value]="youtubeUrl()"
+            (input)="onYoutubeUrlChange($any($event.target).value)"
+            placeholder="Paste YouTube or video URL..."
+            class="w-full bg-neutral-900/60 border border-neutral-700/70 rounded-xl pl-10 pr-4 py-3 text-sm text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+          />
+        </div>
+      </div>
+
+      <!-- Section 2: Subtitle Options Panel -->
+      <div class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col gap-6">
+        <h2 class="text-lg font-semibold flex items-center gap-2 text-white">
+          <mat-icon class="text-purple-400">tune</mat-icon>
+          Subtitle Configuration
+        </h2>
+
+        <!-- Subtitle Format Selector -->
+        <div>
+          <label class="block text-xs font-medium text-neutral-400 mb-2 uppercase tracking-wider">Output Format</label>
+          <div class="flex gap-3">
+            <button
+              (click)="setFormat('vtt')"
+              [ngClass]="subtitleFormat() === 'vtt' ? 'bg-gradient-to-r from-indigo-600 to-purple-600 border-indigo-400' : 'bg-neutral-900/60 border-neutral-700'"
+              class="flex-1 py-3 px-4 rounded-xl border text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-sm"
+            >
+              <mat-icon class="text-sm">description</mat-icon>
+              WebVTT (.vtt)
+            </button>
+
+            <button
+              (click)="setFormat('srt')"
+              [ngClass]="subtitleFormat() === 'srt' ? 'bg-gradient-to-r from-indigo-600 to-purple-600 border-indigo-400' : 'bg-neutral-900/60 border-neutral-700'"
+              class="flex-1 py-3 px-4 rounded-xl border text-sm font-medium transition-all flex items-center justify-center gap-2 shadow-sm"
+            >
+              <mat-icon class="text-sm">subtitles</mat-icon>
+              SubRip (.srt)
+            </button>
+          </div>
+        </div>
+
+        <!-- Language Selector & Burn-in Toggle Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- Language Selector -->
+          <div>
+            <label class="block text-xs font-medium text-neutral-400 mb-2 uppercase tracking-wider">Audio Language</label>
+            <select
+              [value]="sourceLanguage()"
+              (change)="setLanguage($any($event.target).value)"
+              class="w-full bg-neutral-900/60 border border-neutral-700/70 rounded-xl px-4 py-3 text-sm text-neutral-200 focus:outline-none focus:border-indigo-500 transition-colors"
+            >
+              <option *ngFor="let lang of availableLanguages" [value]="lang.code" class="bg-neutral-900 text-white">
+                {{ lang.label }}
+              </option>
+            </select>
+          </div>
+
+          <!-- Hardburned Overlay Toggle -->
+          <div>
+            <label class="block text-xs font-medium text-neutral-400 mb-2 uppercase tracking-wider">Subtitles Rendering</label>
+            <button
+              (click)="toggleBurnSubtitles()"
+              class="w-full py-3 px-4 rounded-xl border border-neutral-700/70 bg-neutral-900/60 text-sm font-medium flex items-center justify-between transition-all hover:border-neutral-500"
+            >
+              <span class="flex items-center gap-2 text-neutral-200">
+                <mat-icon [ngClass]="burnSubtitles() ? 'text-indigo-400' : 'text-neutral-400'">layers</mat-icon>
+                {{ burnSubtitles() ? 'Hardburned Overlay' : 'Soft Subtitles Track' }}
+              </span>
+              <div
+                [ngClass]="burnSubtitles() ? 'bg-indigo-600' : 'bg-neutral-700'"
+                class="w-10 h-6 rounded-full p-1 transition-colors duration-200 ease-in-out relative"
+              >
+                <div
+                  [ngClass]="{'translate-x-4': burnSubtitles()}"
+                  class="w-4 h-4 rounded-full bg-white transition-transform duration-200 ease-in-out"
+                ></div>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 3: Action & Progress Bar -->
+      <div class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col gap-4">
+        <button
+          (click)="startGeneration()"
+          [disabled]="!hasInput() || isProcessing()"
+          [ngClass]="{'opacity-50 cursor-not-allowed': !hasInput() || isProcessing()}"
+          class="w-full py-4 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-semibold shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-3 group relative overflow-hidden"
+        >
+          <mat-icon *ngIf="!isProcessing()" class="group-hover:rotate-12 transition-transform">auto_awesome</mat-icon>
+          <mat-icon *ngIf="isProcessing()" class="animate-spin">sync</mat-icon>
+          <span>{{ isProcessing() ? 'Generating Subtitles...' : 'Generate Subtitles' }}</span>
+        </button>
+
+        <!-- Active Progress Bar & Indicators -->
+        <div *ngIf="processingStep() !== 'idle'" class="flex flex-col gap-3 mt-2">
+          <div class="flex justify-between items-center text-xs font-semibold text-neutral-400 uppercase tracking-wider">
+            <span>Status: <strong class="text-indigo-400 capitalize">{{ processingStep() }}</strong></span>
+            <span>{{ progressPercentage() }}%</span>
+          </div>
+
+          <!-- Progress Bar -->
+          <div class="w-full h-2 bg-neutral-900 rounded-full overflow-hidden border border-white/5">
+            <div
+              class="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 transition-all duration-500 ease-out"
+              [style.width.%]="progressPercentage()"
+            ></div>
+          </div>
+
+          <!-- Pipeline Steps Indicator -->
+          <div class="grid grid-cols-4 gap-2 text-center text-xs text-neutral-400 pt-1">
+            <div [ngClass]="{'text-indigo-400': processingStep() === 'uploading' || progressPercentage() >= 15}" class="flex flex-col items-center gap-1">
+              <mat-icon class="text-sm">cloud_upload</mat-icon>
+              <span>Upload</span>
+            </div>
+            <div [ngClass]="{'text-indigo-400': processingStep() === 'transcribing' || progressPercentage() >= 45}" class="flex flex-col items-center gap-1">
+              <mat-icon class="text-sm">graphic_eq</mat-icon>
+              <span>Transcribe</span>
+            </div>
+            <div [ngClass]="{'text-indigo-400': processingStep() === 'formatting' || progressPercentage() >= 75}" class="flex flex-col items-center gap-1">
+              <mat-icon class="text-sm">tune</mat-icon>
+              <span>Format</span>
+            </div>
+            <div [ngClass]="{'text-indigo-400': processingStep() === 'completed' || progressPercentage() === 100}" class="flex flex-col items-center gap-1">
+              <mat-icon class="text-sm">check_circle</mat-icon>
+              <span>Complete</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column: Preview & Output Card -->
+    <div class="lg:col-span-5 flex flex-col gap-6">
+      <div class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col gap-6 h-full">
+        <h2 class="text-lg font-semibold flex items-center gap-2 text-white">
+          <mat-icon class="text-teal-400">preview</mat-icon>
+          Preview & Output
+        </h2>
+
+        <!-- Video Player Frame -->
+        <div class="aspect-video w-full bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 relative flex items-center justify-center shadow-inner group">
+          <video
+            *ngIf="previewVideoUrl()"
+            [src]="previewVideoUrl()"
+            controls
+            class="w-full h-full object-contain"
+          ></video>
+
+          <div *ngIf="!previewVideoUrl()" class="flex flex-col items-center justify-center gap-2 text-neutral-500">
+            <mat-icon class="text-4xl text-neutral-600">movie_creation</mat-icon>
+            <p class="text-xs">No media preview loaded</p>
+          </div>
+
+          <!-- Overlay Subtitle Mock Badge -->
+          <div *ngIf="isComplete()" class="absolute bottom-12 inset-x-4 text-center pointer-events-none">
+            <span class="bg-black/80 text-white font-medium px-4 py-1.5 rounded-md text-sm border border-white/10 backdrop-blur-md inline-block shadow-lg">
+              [Synced Subtitles Preview Output]
+            </span>
+          </div>
+        </div>
+
+        <!-- Output Downloads Section -->
+        <div class="flex-1 flex flex-col justify-end gap-3 pt-4 border-t border-neutral-800">
+          <h3 class="text-xs font-semibold text-neutral-400 uppercase tracking-wider">Generated Subtitle Deliverables</h3>
+
+          <div class="grid grid-cols-1 gap-3">
+            <a
+              [ngClass]="{'pointer-events-none opacity-50': !isComplete()}"
+              class="w-full py-3 px-4 rounded-xl bg-neutral-900/80 border border-neutral-700/80 hover:border-indigo-500 text-sm font-medium flex items-center justify-between text-neutral-200 transition-all cursor-pointer"
+            >
+              <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center text-indigo-400">
+                  <mat-icon class="text-sm">description</mat-icon>
+                </div>
+                <div>
+                  <p class="text-xs font-semibold text-neutral-100">WebVTT File</p>
+                  <p class="text-[10px] text-neutral-400">Standard web video caption format (.vtt)</p>
+                </div>
+              </div>
+              <mat-icon class="text-indigo-400 text-lg">download</mat-icon>
+            </a>
+
+            <a
+              [ngClass]="{'pointer-events-none opacity-50': !isComplete()}"
+              class="w-full py-3 px-4 rounded-xl bg-neutral-900/80 border border-neutral-700/80 hover:border-purple-500 text-sm font-medium flex items-center justify-between text-neutral-200 transition-all cursor-pointer"
+            >
+              <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center text-purple-400">
+                  <mat-icon class="text-sm">subtitles</mat-icon>
+                </div>
+                <div>
+                  <p class="text-xs font-semibold text-neutral-100">SubRip File</p>
+                  <p class="text-[10px] text-neutral-400">Universal video editor format (.srt)</p>
+                </div>
+              </div>
+              <mat-icon class="text-purple-400 text-lg">download</mat-icon>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

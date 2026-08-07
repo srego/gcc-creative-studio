@@ -64,6 +64,10 @@ Creative Studio goes beyond simple demos, implementing advanced, real-world feat
 
 - Includes functionality for seeding system-level assets like garments and models, laying the groundwork for virtual try-on applications.
 
+**💬 Video Subtitles Studio (Custom Extensions):**
+
+- Integrated custom client navigation layout and standalone Subtitles studio view supporting WebVTT / SRT subtitle generation, formatting, and playback preview overlay.
+
 ## GenMedia Screenshots | Creative Studio
 
 <p align="center">
