@@ -20,3 +20,4 @@ local/
 genmedia-agent-demos
 .gemini
 .agents
+output_subtitles/

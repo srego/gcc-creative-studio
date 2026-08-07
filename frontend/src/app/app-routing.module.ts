@@ -36,7 +36,12 @@ import {UserRolesEnum} from './common/models/user.model';
 
 const routes: Routes = [
   {path: 'login', component: LoginComponent},
-  {path: '', component: HomeComponent, pathMatch: 'full', canActivate: [AuthGuardService]},
+  {
+    path: '',
+    component: HomeComponent,
+    pathMatch: 'full',
+    canActivate: [AuthGuardService],
+  },
   {
     path: 'fun-templates',
     component: FunTemplatesComponent,

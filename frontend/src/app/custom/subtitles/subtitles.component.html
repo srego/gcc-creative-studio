@@ -1,19 +1,47 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
 <div class="min-h-screen p-6 md:p-10 text-neutral-100 flex flex-col gap-8 max-w-7xl mx-auto">
   <!-- Page Header -->
-  <div class="flex items-center gap-4">
-    <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-500 p-0.5 shadow-lg shadow-indigo-500/20">
-      <div class="w-full h-full bg-neutral-900/80 backdrop-blur-xl rounded-[14px] flex items-center justify-center">
-        <mat-icon class="text-indigo-400 text-3xl">subtitles</mat-icon>
+  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div class="flex items-center gap-4">
+      <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-500 p-0.5 shadow-lg shadow-indigo-500/20 shrink-0">
+        <div class="w-full h-full bg-neutral-900/80 backdrop-blur-xl rounded-[14px] flex items-center justify-center">
+          <mat-icon class="text-indigo-400 text-3xl">subtitles</mat-icon>
+        </div>
+      </div>
+      <div>
+        <h1 class="text-3xl font-bold tracking-tight bg-gradient-to-r from-white via-neutral-200 to-neutral-400 bg-clip-text text-transparent">
+          Video Subtitles Studio
+        </h1>
+        <p class="text-sm text-neutral-400 mt-1">
+          Generate, format, and overlay synchronized multi-language subtitles for video and audio content.
+        </p>
       </div>
     </div>
-    <div>
-      <h1 class="text-3xl font-bold tracking-tight bg-gradient-to-r from-white via-neutral-200 to-neutral-400 bg-clip-text text-transparent">
-        Video Subtitles Studio
-      </h1>
-      <p class="text-sm text-neutral-400 mt-1">
-        Generate, format, and overlay synchronized multi-language subtitles for video and audio content.
-      </p>
-    </div>
+
+    <!-- Always-visible New Job / Reset Action -->
+    <button
+      (click)="resetStudio()"
+      class="self-start sm:self-auto flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-neutral-200 hover:text-white text-xs font-semibold border border-white/10 transition-all cursor-pointer shadow-sm hover:border-indigo-500/40"
+      title="Reset studio and start fresh"
+    >
+      <mat-icon class="text-base text-indigo-400">restart_alt</mat-icon>
+      <span>New Job / Reset</span>
+    </button>
   </div>
 
   <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -27,7 +55,17 @@
             <mat-icon class="text-blue-400">video_library</mat-icon>
             Source Media Input
           </h2>
-          <span class="text-xs text-neutral-400 font-medium">Select 1 source</span>
+          <div class="flex items-center gap-2.5">
+            <button
+              (click)="resetStudio()"
+              class="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/15 text-neutral-300 hover:text-white text-xs border border-white/10 transition-all cursor-pointer shadow-sm"
+              title="Reset studio and start fresh"
+            >
+              <mat-icon class="text-sm text-indigo-400">refresh</mat-icon>
+              <span>Reset</span>
+            </button>
+            <span class="text-xs text-neutral-400 font-medium">Select 1 source</span>
+          </div>
         </div>
 
         <!-- Navigation Tabs -->
@@ -173,8 +211,9 @@
             type="text"
             [value]="packageName()"
             (input)="packageName.set($any($event.target).value)"
-            placeholder="Enter folder name (e.g., Podcast Ep 10 Subtitles [EN])"
-            class="w-full bg-neutral-900/60 border border-neutral-700/70 rounded-xl px-4 py-3 text-sm text-neutral-200 focus:outline-none focus:border-indigo-500 transition-colors"
+            (focus)="$any($event.target).select()"
+            [placeholder]="suggestedPackageName()"
+            class="w-full bg-neutral-900/60 border border-neutral-700/70 rounded-xl px-4 py-3 text-sm text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
           />
         </div>
 
@@ -260,14 +299,18 @@
 
         <!-- Active Progress Bar -->
         <div *ngIf="processingStep() !== 'idle'" class="flex flex-col gap-3 mt-2">
-          <div class="flex justify-between items-center text-xs font-semibold text-neutral-400 uppercase tracking-wider">
-            <span>Status: <strong class="text-indigo-400 capitalize">{{ processingStep() }}</strong></span>
-            <span>{{ progressPercentage() }}%</span>
+          <div class="flex justify-between items-center text-xs font-semibold text-neutral-400">
+            <span class="flex items-center gap-2">
+              <mat-icon *ngIf="isProcessing()" class="text-sm text-indigo-400 animate-spin">sync</mat-icon>
+              <mat-icon *ngIf="isComplete()" class="text-sm text-emerald-400">check_circle</mat-icon>
+              <span class="text-neutral-200">{{ statusDescription() }}</span>
+            </span>
+            <span class="font-mono text-indigo-400 font-bold">{{ progressPercentage() }}%</span>
           </div>
 
-          <div class="w-full h-2 bg-neutral-900 rounded-full overflow-hidden border border-white/5">
+          <div class="w-full h-2.5 bg-neutral-900 rounded-full overflow-hidden border border-white/10 p-0.5">
             <div
-              class="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 transition-all duration-500 ease-out"
+              class="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 rounded-full transition-all duration-500 ease-out"
               [style.width.%]="progressPercentage()"
             ></div>
           </div>
@@ -308,6 +351,26 @@
         <div class="flex-1 flex flex-col justify-end gap-3 pt-4 border-t border-neutral-800">
           <h3 class="text-xs font-semibold text-neutral-400 uppercase tracking-wider">Generated Package Deliverables</h3>
 
+          <!-- Error Alert Banner -->
+          <div *ngIf="errorMessage()" class="p-3.5 rounded-xl bg-red-950/60 border border-red-500/30 text-red-200 text-xs flex items-start gap-2.5 shadow-md">
+            <mat-icon class="text-red-400 text-base mt-0.5 shrink-0">error</mat-icon>
+            <div>
+              <p class="font-semibold text-red-300">Generation Failed</p>
+              <p class="text-[11px] text-red-300/80 mt-0.5">{{ errorMessage() }}</p>
+            </div>
+          </div>
+
+          <!-- Local Saved Folder Location Badge -->
+          <div *ngIf="isComplete() && localOutputDir()" class="p-3.5 rounded-xl bg-indigo-950/60 border border-indigo-500/30 text-indigo-200 text-xs flex flex-col gap-1.5 shadow-md">
+            <div class="flex items-center gap-2 font-semibold text-indigo-300">
+              <mat-icon class="text-indigo-400 text-base">folder_open</mat-icon>
+              <span>Saved Locally to Workspace:</span>
+            </div>
+            <code class="text-[11px] font-mono bg-black/40 px-2.5 py-1.5 rounded-lg border border-white/5 text-neutral-300 break-all select-all">
+              {{ localOutputDir() }}
+            </code>
+          </div>
+
           <div class="grid grid-cols-1 gap-2.5">
             <!-- Dynamic Subtitles Deliverable -->
             <div
@@ -324,7 +387,7 @@
                   <p class="text-[10px] text-neutral-400">{{ currentPackageDisplayName() }}.vtt</p>
                 </div>
               </div>
-              <button [disabled]="!isComplete()" class="text-indigo-400 hover:text-indigo-300">
+              <button (click)="downloadCaptions('vtt')" [disabled]="!isComplete()" class="text-indigo-400 hover:text-indigo-300">
                 <mat-icon class="text-lg">download</mat-icon>
               </button>
             </div>
@@ -344,7 +407,7 @@
                   <p class="text-[10px] text-neutral-400">{{ currentPackageDisplayName() }} (Burned).mp4</p>
                 </div>
               </div>
-              <button [disabled]="!isComplete()" class="text-purple-400 hover:text-purple-300">
+              <button (click)="downloadVideo()" [disabled]="!isComplete()" class="text-purple-400 hover:text-purple-300">
                 <mat-icon class="text-lg">download</mat-icon>
               </button>
             </div>
@@ -358,6 +421,16 @@
             >
               <mat-icon class="text-sm">folder_special</mat-icon>
               <span>Save Complete Package Folder to Media Gallery</span>
+            </button>
+
+            <!-- Start Another Video (Reset) Button -->
+            <button
+              *ngIf="isComplete()"
+              (click)="resetStudio()"
+              class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-neutral-800 to-neutral-700 hover:from-neutral-700 hover:to-neutral-600 text-neutral-200 hover:text-white font-semibold text-xs transition-all flex items-center justify-center gap-2 border border-white/10 shadow-md mt-1 cursor-pointer"
+            >
+              <mat-icon class="text-sm text-indigo-400">restart_alt</mat-icon>
+              <span>Start Another Video / Reset Studio</span>
             </button>
 
             <!-- Save Toast Notification -->

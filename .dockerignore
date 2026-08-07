@@ -9,4 +9,5 @@ Dockerfile
 .git
 .vscode
 .gitignore
+output_subtitles/
 Makefile

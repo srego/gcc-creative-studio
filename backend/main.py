@@ -58,6 +58,9 @@ from src.workflows_executor.workflows_executor_controller import (
     router as workflows_executor_router,
 )
 from src.workspaces.workspace_controller import router as workspace_router
+from src.custom.subtitles.subtitle_controller import (
+    router as custom_subtitles_router,
+)
 
 
 def configure_cors(app):
@@ -185,3 +188,4 @@ app.include_router(brand_guideline_router)
 app.include_router(workflow_router)
 app.include_router(workflows_executor_router)
 app.include_router(workbench_router)
+app.include_router(custom_subtitles_router)

@@ -1,0 +1,661 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Unit tests for the custom subtitle processing service and API endpoints."""
+
+import os
+import tempfile
+from unittest.mock import MagicMock, patch
+
+import pytest
+from fastapi import HTTPException
+from src.custom.subtitles.subtitle_dto import (
+    SubtitleRequestDTO,
+    SubtitleResponseDTO,
+)
+from src.custom.subtitles.subtitle_service import (
+    PodcastSubtitleEngine,
+    SubtitleService,
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate_test_subtitles_output_dir(tmp_path, monkeypatch):
+    """Isolates SUBTITLES_OUTPUT_DIR to a temporary pytest directory to avoid polluting workspace."""
+    test_out = tmp_path / "test_subtitles_out"
+    test_out.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("SUBTITLES_OUTPUT_DIR", str(test_out))
+
+
+def test_subtitle_dto_instantiation():
+    """Tests instantiation and field defaults of Subtitle DTOs."""
+    req = SubtitleRequestDTO(video_url="gs://test-bucket/video.mp4")
+    assert req.video_url == "gs://test-bucket/video.mp4"
+    assert req.language_code == "en-US"
+    assert req.output_format == "vtt"
+    assert req.burn_subtitles is False
+
+    res = SubtitleResponseDTO(job_id="sub_123", status="completed")
+    assert res.job_id == "sub_123"
+    assert res.status == "completed"
+    assert res.segment_count == 0
+
+
+def test_timestamp_formatting():
+    """Tests VTT and SRT timestamp formatters in PodcastSubtitleEngine."""
+    engine = PodcastSubtitleEngine()
+    vtt_ts = engine._format_vtt_timestamp(65.432)
+    assert vtt_ts == "00:01:05.432"
+
+    srt_ts = engine._format_srt_timestamp(3665.123)
+    assert srt_ts == "01:01:05,123"
+
+
+def test_max_char_limit_enforcement():
+    """Tests character limit enforcement to ensure <= 42 chars per line."""
+    engine = PodcastSubtitleEngine()
+    long_segment = [
+        {
+            "speaker": "Speaker 1",
+            "start_time": 0.0,
+            "end_time": 10.0,
+            "text": "This is a very long subtitle sentence that exceeds forty two characters and must be split into multiple sub-segments deterministically.",
+        }
+    ]
+    refined = engine._enforce_max_char_limit(long_segment, max_chars=42)
+    assert len(refined) > 1
+    for seg in refined:
+        assert len(seg["text"]) <= 42
+
+
+def test_export_vtt_srt():
+    """Tests sidecar file export for WebVTT and SubRip SRT formats."""
+    engine = PodcastSubtitleEngine()
+    subtitle_data = [
+        {
+            "speaker": "Speaker 1",
+            "start_time": 1.0,
+            "end_time": 3.0,
+            "text": "Hello world",
+        },
+        {
+            "speaker": "Speaker 2",
+            "start_time": 3.5,
+            "end_time": 5.0,
+            "text": "Welcome to podcast",
+        },
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        vtt_path = os.path.join(tmpdir, "test.vtt")
+        srt_path = os.path.join(tmpdir, "test.srt")
+        paths = engine.export_vtt_srt(subtitle_data, vtt_path, srt_path)
+
+        assert os.path.exists(paths["vtt"])
+        assert os.path.exists(paths["srt"])
+
+        with open(paths["vtt"], "r", encoding="utf-8") as f:
+            vtt_content = f.read()
+            assert "WEBVTT" in vtt_content
+            assert "Hello world" in vtt_content
+
+        with open(paths["srt"], "r", encoding="utf-8") as f:
+            srt_content = f.read()
+            assert "1\n00:00:01,000 --> 00:00:03,000" in srt_content
+
+
+def test_rule_based_fallback_segmenter():
+    """Tests fallback segmentation when LLM refinement is unavailable."""
+    engine = PodcastSubtitleEngine()
+    words_data = [
+        {
+            "word": "Welcome",
+            "start_time": 0.0,
+            "end_time": 0.5,
+            "speaker": "Speaker 1",
+        },
+        {
+            "word": "everyone",
+            "start_time": 0.5,
+            "end_time": 1.0,
+            "speaker": "Speaker 1",
+        },
+    ]
+    segs = engine._fallback_rule_based_segmenter(words_data, max_chars=42)
+    assert len(segs) == 1
+    assert segs[0]["text"] == "Welcome everyone"
+
+
+def test_download_youtube_audio():
+    """Tests YouTube audio downloader with mocked subprocess."""
+    engine = PodcastSubtitleEngine()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        fake_file = os.path.join(tmpdir, "yt_download.mp3")
+        with open(fake_file, "w") as f:
+            f.write("dummy audio")
+
+        with patch("subprocess.run") as mock_sub:
+            mock_sub.return_value = MagicMock(returncode=0)
+            res = engine.download_youtube_audio(
+                "https://youtube.com/watch?v=123", tmpdir
+            )
+            assert res == fake_file
+
+        with patch("subprocess.run") as mock_sub:
+            mock_sub.return_value = MagicMock(
+                returncode=1, stderr="Error downloading"
+            )
+            with pytest.raises(RuntimeError):
+                engine.download_youtube_audio(
+                    "https://youtube.com/watch?v=123", tmpdir
+                )
+
+
+def test_transcribe_chirp3_local_file():
+    """Tests STT v2 transcription with local file and GCS upload mock."""
+    engine = PodcastSubtitleEngine()
+    engine.speech_client = MagicMock()
+    engine.storage_client = MagicMock()
+
+    with tempfile.NamedTemporaryFile(suffix=".mp4") as tmp_file:
+        tmp_path = tmp_file.name
+
+        mock_op = MagicMock()
+        mock_op.result.return_value = MagicMock(
+            results={
+                "uri1": MagicMock(
+                    transcript=MagicMock(
+                        results=[
+                            MagicMock(
+                                alternatives=[
+                                    MagicMock(
+                                        transcript="hello podcast",
+                                        words=[
+                                            MagicMock(
+                                                word="hello",
+                                                start_offset=MagicMock(
+                                                    total_seconds=lambda: 0.0
+                                                ),
+                                                end_offset=MagicMock(
+                                                    total_seconds=lambda: 0.5
+                                                ),
+                                                speaker_label="1",
+                                            ),
+                                            MagicMock(
+                                                word="podcast",
+                                                start_offset=MagicMock(
+                                                    total_seconds=lambda: 0.5
+                                                ),
+                                                end_offset=MagicMock(
+                                                    total_seconds=lambda: 1.0
+                                                ),
+                                                speaker_label="1",
+                                            ),
+                                        ],
+                                    )
+                                ]
+                            )
+                        ]
+                    )
+                )
+            }
+        )
+        engine.speech_client.batch_recognize.return_value = mock_op
+
+        with patch("subprocess.run") as mock_ffmpeg:
+            mock_ffmpeg.return_value = MagicMock(returncode=0)
+            result = engine.transcribe_chirp3(tmp_path)
+            assert "hello podcast" in result["full_text"]
+            assert len(result["words"]) == 2
+
+
+def test_refine_gemini36_success():
+    """Tests Gemini subtitle refinement with mocked GenAI response."""
+    engine = PodcastSubtitleEngine()
+    engine.genai_client = MagicMock()
+
+    mock_res = MagicMock()
+    mock_res.text = '[{"speaker": "Speaker 1", "start_time": 0.0, "end_time": 1.0, "text": "Hello podcast"}]'
+    engine.genai_client.models.generate_content.return_value = mock_res
+
+    words_data = {
+        "words": [
+            {
+                "word": "Hello",
+                "start_time": 0.0,
+                "end_time": 0.5,
+                "speaker": "Speaker 1",
+            }
+        ]
+    }
+    refined = engine.refine_gemini36(words_data)
+    assert len(refined) == 1
+    assert refined[0]["text"] == "Hello podcast"
+
+
+def test_ffmpeg_burning_and_embedding():
+    """Tests FFmpeg hardburn and soft subtitle embedding with mocked subprocess."""
+    engine = PodcastSubtitleEngine()
+    with (
+        tempfile.NamedTemporaryFile(suffix=".mp4") as video_file,
+        tempfile.NamedTemporaryFile(suffix=".vtt") as sub_file,
+    ):
+        out_video = video_file.name + ".out.mp4"
+
+        with (
+            patch("subprocess.run") as mock_sub,
+            patch("os.replace") as mock_rep,
+        ):
+            mock_sub.return_value = MagicMock(returncode=0)
+            res_burn = engine.burn_subtitles_ffmpeg(
+                video_file.name, sub_file.name, out_video
+            )
+            assert res_burn == out_video
+
+            res_embed = engine.embed_soft_subtitles_ffmpeg(
+                video_file.name, sub_file.name, out_video
+            )
+            assert res_embed == out_video
+
+        with patch("subprocess.run") as mock_sub:
+            mock_sub.return_value = MagicMock(
+                returncode=1, stderr="FFmpeg filter error"
+            )
+            with pytest.raises(RuntimeError):
+                engine.burn_subtitles_ffmpeg(
+                    video_file.name, sub_file.name, out_video
+                )
+            with pytest.raises(RuntimeError):
+                engine.embed_soft_subtitles_ffmpeg(
+                    video_file.name, sub_file.name, out_video
+                )
+
+        if os.path.exists(out_video):
+            os.remove(out_video)
+
+
+def test_process_video_pipeline():
+    """Tests end-to-end process_video pipeline execution with mocks."""
+    engine = PodcastSubtitleEngine()
+    with (
+        tempfile.NamedTemporaryFile(suffix=".mp4") as video_file,
+        tempfile.TemporaryDirectory() as job_dir,
+    ):
+        with (
+            patch.object(engine, "transcribe_chirp3") as mock_stt,
+            patch.object(engine, "refine_gemini36") as mock_gemini,
+            patch.object(engine, "embed_soft_subtitles_ffmpeg") as mock_embed,
+            patch.object(engine, "burn_subtitles_ffmpeg") as mock_burn,
+        ):
+
+            mock_stt.return_value = {"full_text": "Sample text", "words": []}
+            mock_gemini.return_value = [
+                {
+                    "speaker": "Speaker 1",
+                    "start_time": 0.0,
+                    "end_time": 1.0,
+                    "text": "Sample text",
+                }
+            ]
+
+            res = engine.process_video(
+                video_file.name, job_dir=job_dir, generate_burned_in=True
+            )
+            assert res["segment_count"] == 1
+            assert os.path.exists(res["subtitles_vtt"])
+            assert os.path.exists(res["subtitles_srt"])
+
+
+def test_subtitle_service_job_lifecycle():
+    """Tests SubtitleService job tracking lifecycle."""
+    service = SubtitleService()
+    job_id = service.create_job()
+    assert job_id.startswith("sub_")
+
+    status = service.get_job_status(job_id)
+    assert status is not None
+    assert status.status == "pending"
+
+    with patch.object(service.engine, "process_video") as mock_process:
+        mock_process.return_value = {
+            "job_dir": "/tmp/job",
+            "source_video": "/tmp/job/video.mp4",
+            "default_toggleable_video": "/tmp/job/output_toggleable.mp4",
+            "burned_in_video": None,
+            "subtitles_vtt": "/tmp/job/subtitles.vtt",
+            "subtitles_srt": "/tmp/job/subtitles.srt",
+            "segment_count": 2,
+            "transcript_text": "Welcome everyone",
+        }
+        updated_job = service.process_job(
+            job_id=job_id,
+            video_path="/tmp/job/video.mp4",
+            burn_subtitles=False,
+            output_format="vtt",
+        )
+        assert updated_job.status == "completed"
+        assert updated_job.segment_count == 2
+        assert updated_job.subtitles_vtt == "/tmp/job/subtitles.vtt"
+        assert updated_job.local_output_dir is not None
+
+    with patch.object(
+        service.engine, "process_video", side_effect=ValueError("Invalid video")
+    ):
+        failed_job = service.process_job(
+            job_id="sub_failed_1",
+            video_path="/tmp/invalid.mp4",
+        )
+        assert failed_job.status == "failed"
+        assert "Invalid video" in failed_job.error_message
+
+
+def test_resolve_output_dir():
+    """Tests resolve_output_dir helper with custom package name, auto-versioning, and fallback."""
+    service = SubtitleService()
+    custom_dir = service.resolve_output_dir("Sundar Pichai Clip!", "123")
+    assert "Sundar Pichai Clip" in custom_dir
+    assert os.path.exists(custom_dir)
+
+    # Place a dummy file in the directory to simulate an existing completed package
+    dummy_file = os.path.join(custom_dir, "subtitles.vtt")
+    with open(dummy_file, "w") as f:
+        f.write("WEBVTT")
+
+    # Resolving with the same name should now auto-version to _v2
+    versioned_dir = service.resolve_output_dir("Sundar Pichai Clip!", "123")
+    assert versioned_dir.endswith("_v2")
+    assert os.path.exists(versioned_dir)
+
+    fallback_dir = service.resolve_output_dir("", "456")
+    assert "job_456" in fallback_dir
+    assert os.path.exists(fallback_dir)
+
+
+def test_controller_generate_endpoint_json(api_client):
+    """Tests POST /api/v1/custom/subtitles/generate endpoint with JSON request."""
+    with patch(
+        "src.custom.subtitles.subtitle_controller.subtitle_service.process_job"
+    ) as mock_pj:
+        mock_pj.return_value = SubtitleResponseDTO(
+            job_id="sub_test123",
+            status="completed",
+            subtitles_vtt="/tmp/subtitles.vtt",
+            default_toggleable_video="/tmp/toggleable.mp4",
+            segment_count=5,
+        )
+
+        # Sync mode test
+        response_sync = api_client.post(
+            "/api/v1/custom/subtitles/generate?sync=true",
+            json={
+                "video_url": "gs://test-bucket/test_video.mp4",
+                "output_format": "vtt",
+                "burn_subtitles": False,
+            },
+        )
+        assert response_sync.status_code == 200
+        data_sync = response_sync.json()
+        assert data_sync["job_id"] == "sub_test123"
+        assert data_sync["status"] == "completed"
+
+        # Async background mode test
+        response_async = api_client.post(
+            "/api/v1/custom/subtitles/generate",
+            json={
+                "video_url": "gs://test-bucket/test_video.mp4",
+                "output_format": "vtt",
+                "burn_subtitles": False,
+            },
+        )
+        assert response_async.status_code == 200
+        data_async = response_async.json()
+        assert data_async["status"] == "processing"
+
+
+def test_controller_generate_youtube(api_client):
+    """Tests POST /api/v1/custom/subtitles/generate with YouTube URL."""
+    with (
+        patch(
+            "src.custom.subtitles.subtitle_controller.subtitle_service.engine.download_youtube_audio"
+        ) as mock_yt,
+        patch(
+            "src.custom.subtitles.subtitle_controller.subtitle_service.process_job"
+        ) as mock_pj,
+    ):
+        mock_yt.return_value = "/tmp/yt_audio.mp3"
+        mock_pj.return_value = SubtitleResponseDTO(
+            job_id="sub_yt1", status="completed"
+        )
+
+        response = api_client.post(
+            "/api/v1/custom/subtitles/generate?sync=true",
+            json={"video_url": "https://www.youtube.com/watch?v=test"},
+        )
+        assert response.status_code == 200
+
+
+def test_controller_generate_missing_input(api_client):
+    """Tests POST /api/v1/custom/subtitles/generate with no input."""
+    response = api_client.post(
+        "/api/v1/custom/subtitles/generate",
+        json={},
+    )
+    assert response.status_code == 400
+
+
+def test_controller_generate_failure(api_client):
+    """Tests POST /api/v1/custom/subtitles/generate when processing fails."""
+    with patch(
+        "src.custom.subtitles.subtitle_controller.subtitle_service.process_job"
+    ) as mock_pj:
+        mock_pj.return_value = SubtitleResponseDTO(
+            job_id="sub_err1",
+            status="failed",
+            error_message="Processing error",
+        )
+        response = api_client.post(
+            "/api/v1/custom/subtitles/generate?sync=true",
+            json={"video_url": "gs://test/video.mp4"},
+        )
+        assert response.status_code == 500
+
+
+def test_controller_get_status(api_client):
+    """Tests GET /api/v1/custom/subtitles/status/{job_id} endpoint."""
+    with patch(
+        "src.custom.subtitles.subtitle_controller.subtitle_service.get_job_status"
+    ) as mock_status:
+        mock_status.return_value = SubtitleResponseDTO(
+            job_id="sub_status_123",
+            status="processing",
+        )
+        response = api_client.get(
+            "/api/v1/custom/subtitles/status/sub_status_123"
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "processing"
+
+    response_404 = api_client.get(
+        "/api/v1/custom/subtitles/status/sub_nonexistent"
+    )
+    assert response_404.status_code == 404
+
+
+def test_controller_download_file_types(api_client):
+    """Tests GET /api/v1/custom/subtitles/download/{job_id} for various file types."""
+    with (
+        tempfile.NamedTemporaryFile(suffix=".vtt", delete=False) as tmp_vtt,
+        tempfile.NamedTemporaryFile(suffix=".srt", delete=False) as tmp_srt,
+        tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_mp4,
+    ):
+
+        tmp_vtt.write(b"WEBVTT\n1\n00:00:00.000 --> 00:00:02.000\nHello")
+        tmp_srt.write(b"1\n00:00:00,000 --> 00:00:02,000\nHello")
+        tmp_mp4.write(b"fake mp4 header")
+
+        tmp_vtt_path = tmp_vtt.name
+        tmp_srt_path = tmp_srt.name
+        tmp_mp4_path = tmp_mp4.name
+
+    try:
+        dto_success = SubtitleResponseDTO(
+            job_id="sub_download_123",
+            status="completed",
+            subtitles_vtt=tmp_vtt_path,
+            subtitles_srt=tmp_srt_path,
+            default_toggleable_video=tmp_mp4_path,
+            burned_in_video=tmp_mp4_path,
+        )
+        with patch(
+            "src.custom.subtitles.subtitle_controller.subtitle_service.get_job_status"
+        ) as mock_status:
+            mock_status.side_effect = lambda jid: (
+                dto_success if jid == "sub_download_123" else None
+            )
+
+            res_vtt = api_client.get(
+                "/api/v1/custom/subtitles/download/sub_download_123?file_type=vtt"
+            )
+            assert res_vtt.status_code == 200
+
+            res_srt = api_client.get(
+                "/api/v1/custom/subtitles/download/sub_download_123?file_type=srt"
+            )
+            assert res_srt.status_code == 200
+
+            res_video = api_client.get(
+                "/api/v1/custom/subtitles/download/sub_download_123?file_type=toggleable_video"
+            )
+            assert res_video.status_code == 200
+
+            res_burned = api_client.get(
+                "/api/v1/custom/subtitles/download/sub_download_123?file_type=burned_in_video"
+            )
+            assert res_burned.status_code == 200
+
+            res_404_job = api_client.get(
+                "/api/v1/custom/subtitles/download/unknown_job"
+            )
+            assert res_404_job.status_code == 404
+
+            res_invalid_type = api_client.get(
+                "/api/v1/custom/subtitles/download/sub_download_123?file_type=invalid_type"
+            )
+            assert res_invalid_type.status_code == 404
+    finally:
+        for p in [tmp_vtt_path, tmp_srt_path, tmp_mp4_path]:
+            if os.path.exists(p):
+                os.remove(p)
+
+
+def test_controller_generate_multipart_form(api_client):
+    """Tests POST /api/v1/custom/subtitles/generate with multipart form file upload."""
+    with patch(
+        "src.custom.subtitles.subtitle_controller.subtitle_service.process_job"
+    ) as mock_pj:
+        mock_pj.return_value = SubtitleResponseDTO(
+            job_id="sub_form1",
+            status="completed",
+            subtitles_vtt="/tmp/subtitles.vtt",
+            segment_count=3,
+        )
+
+        response = api_client.post(
+            "/api/v1/custom/subtitles/generate?sync=true",
+            data={
+                "package_name": "My Form Podcast",
+                "language_code": "en-US",
+                "output_format": "vtt",
+                "burn_subtitles": "true",
+            },
+            files={"file": ("test_audio.mp4", b"fake audio data", "video/mp4")},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["job_id"] == "sub_form1"
+        assert data["status"] == "completed"
+
+
+def test_refine_gemini_large_chunk_batching():
+    """Tests refine_gemini36 with > 70 words to verify chunk batching logic."""
+    engine = PodcastSubtitleEngine()
+    words = [
+        {
+            "word": f"word_{i}",
+            "start_time": float(i),
+            "end_time": float(i + 0.5),
+            "speaker": "Speaker 1",
+        }
+        for i in range(150)
+    ]
+    with patch.object(
+        engine,
+        "_refine_chunk_gemini",
+        side_effect=lambda chunk: [
+            {
+                "speaker": "Speaker 1",
+                "start_time": chunk[0]["start_time"],
+                "end_time": chunk[-1]["end_time"],
+                "text": " ".join(w["word"] for w in chunk),
+            }
+        ],
+    ):
+        result = engine.refine_gemini36({"words": words})
+        assert len(result) >= 2
+
+
+def test_timestamp_boundary_no_four_digits():
+    """Verifies timestamps close to integer seconds never emit 4-digit milliseconds."""
+    engine = PodcastSubtitleEngine()
+    # 59.9998 should round to 00:01:00.000, NOT 00:00:59.1000
+    vtt = engine._format_vtt_timestamp(59.9998)
+    assert vtt == "00:01:00.000"
+    assert len(vtt.split(".")[1]) == 3
+
+    srt = engine._format_srt_timestamp(59.9998)
+    assert srt == "00:01:00,000"
+    assert len(srt.split(",")[1]) == 3
+
+
+def test_subtitle_service_job_eviction():
+    """Tests that SubtitleService caps its in-memory job cache to prevent memory leaks."""
+    service = SubtitleService()
+    first_job_id = service.create_job()
+    assert first_job_id in service.jobs
+
+    for _ in range(105):
+        service.create_job()
+
+    assert len(service.jobs) <= 100
+    assert first_job_id not in service.jobs
+
+
+def test_transcribe_chirp3_error_raised():
+    """Tests that Speech-to-Text v2 error response raises RuntimeError."""
+    engine = PodcastSubtitleEngine()
+    engine.speech_client = MagicMock()
+    mock_op = MagicMock()
+    mock_res = MagicMock()
+    mock_file_res = MagicMock()
+    mock_file_res.error.code = 3
+    mock_file_res.error.message = "Invalid audio content"
+    mock_res.results = {"file1": mock_file_res}
+    mock_op.result.return_value = mock_res
+    engine.speech_client.batch_recognize.return_value = mock_op
+
+    with pytest.raises(RuntimeError, match="Speech-to-Text v2 error"):
+        engine.transcribe_chirp3(
+            audio_path_or_gcs_uri="gs://bucket/test.wav",
+            language_code="en-US",
+        )

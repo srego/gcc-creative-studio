@@ -1,0 +1,892 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Subtitle processing engine service wrapping GCP STT v2, Gemini, and FFmpeg."""
+
+import concurrent.futures
+import json
+import logging
+import os
+import re
+import subprocess
+import time
+import uuid
+from typing import Any, Callable, Dict, List, Optional
+
+from google import genai
+from google.api_core.client_options import ClientOptions
+from google.cloud import speech_v2, storage
+from google.cloud.speech_v2.types import cloud_speech
+from google.genai import types
+
+from src.config.config_service import config_service
+from src.custom.subtitles.subtitle_dto import SubtitleResponseDTO
+
+logger = logging.getLogger(__name__)
+
+
+class PodcastSubtitleEngine:
+    """Podcast Subtitle Engine powered by GCP STT v2 (chirp_3), Gemini, and FFmpeg."""
+
+    def __init__(
+        self,
+        project_id: Optional[str] = None,
+        region: str = "us",
+        gcs_bucket_name: Optional[str] = None,
+    ):
+        self.project_id = (
+            project_id
+            or getattr(config_service, "PROJECT_ID", None)
+            or "creative-studio-delta"
+        )
+        self.region = region
+        self.gcs_bucket_name = (
+            gcs_bucket_name
+            or getattr(config_service, "GENMEDIA_BUCKET", None)
+            or "creative-studio-delta-cs-development-bucket"
+        )
+
+        credentials = self._get_credentials()
+
+        try:
+            self.speech_client = speech_v2.SpeechClient(
+                credentials=credentials,
+                client_options=ClientOptions(
+                    api_endpoint=f"{self.region}-speech.googleapis.com"
+                ),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize STT v2 client: {e}")
+            self.speech_client = None
+
+        try:
+            self.storage_client = storage.Client(
+                project=self.project_id, credentials=credentials
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize Storage client: {e}")
+            self.storage_client = None
+
+        try:
+            self.genai_client = genai.Client(
+                vertexai=True, project=self.project_id, location="us-central1"
+            )
+        except Exception:
+            try:
+                self.genai_client = genai.Client()
+            except Exception as e:
+                logger.warning(f"Failed to initialize Gemini client: {e}")
+                self.genai_client = None
+
+    def _get_credentials(self) -> Any:
+        """Fetch valid Application Default Credentials with gcloud fallback."""
+        try:
+            import google.auth
+
+            creds, _ = google.auth.default()
+            return creds
+        except Exception:
+            try:
+                res = subprocess.run(
+                    ["gcloud", "auth", "print-access-token"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                token = res.stdout.strip()
+                from google.oauth2.credentials import Credentials
+
+                return Credentials(token)
+            except Exception as e:
+                logger.warning(f"Could not fetch credentials: {e}")
+                return None
+
+    def download_youtube_audio(self, youtube_url: str, target_dir: str) -> str:
+        """Downloads audio track from YouTube URL using yt-dlp."""
+        os.makedirs(target_dir, exist_ok=True)
+        output_template = os.path.join(target_dir, "yt_download.%(ext)s")
+        cmd = [
+            "yt-dlp",
+            "-x",
+            "--audio-format",
+            "mp3",
+            "-o",
+            output_template,
+            youtube_url,
+        ]
+        logger.info(f"Downloading YouTube audio from {youtube_url}...")
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            raise RuntimeError(f"yt-dlp download failed: {res.stderr}")
+
+        downloaded_file = os.path.join(target_dir, "yt_download.mp3")
+        if not os.path.exists(downloaded_file):
+            for f in os.listdir(target_dir):
+                if f.startswith("yt_download"):
+                    downloaded_file = os.path.join(target_dir, f)
+                    break
+        return downloaded_file
+
+    def transcribe_chirp3(
+        self, audio_path_or_gcs_uri: str, language_code: str = "en-US"
+    ) -> Dict[str, Any]:
+        """Transcribe audio using Speech-to-Text v2 chirp_3 model with diarization."""
+        gcs_uri = audio_path_or_gcs_uri
+        temp_wav_path = None
+        staged_blob = None
+
+        if not audio_path_or_gcs_uri.startswith("gs://"):
+            if not os.path.exists(audio_path_or_gcs_uri):
+                raise FileNotFoundError(
+                    f"Audio file not found: {audio_path_or_gcs_uri}"
+                )
+
+            temp_wav_path = f"{audio_path_or_gcs_uri}.stt_tmp.wav"
+            logger.info(
+                f"Extracting 16kHz mono audio from {audio_path_or_gcs_uri}..."
+            )
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                audio_path_or_gcs_uri,
+                "-f",
+                "wav",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                temp_wav_path,
+            ]
+            subprocess.run(cmd, capture_output=True, check=True, timeout=300)
+
+            staged_blob = None
+            if self.storage_client:
+                bucket = self.storage_client.bucket(self.gcs_bucket_name)
+                filename = os.path.basename(temp_wav_path)
+                blob_name = f"staging/{int(time.time())}_{filename}"
+                staged_blob = bucket.blob(blob_name)
+                logger.info(
+                    f"Staging audio to GCS bucket gs://{self.gcs_bucket_name}/{blob_name}..."
+                )
+                staged_blob.upload_from_filename(temp_wav_path)
+                gcs_uri = f"gs://{self.gcs_bucket_name}/{blob_name}"
+
+        try:
+            logger.info(f"Running STT v2 chirp_3 on {gcs_uri}...")
+            words_data: List[Dict[str, Any]] = []
+            full_transcript_parts: List[str] = []
+
+            if self.speech_client:
+                config = cloud_speech.RecognitionConfig(
+                    auto_decoding_config=cloud_speech.AutoDetectDecodingConfig(),
+                    language_codes=[language_code],
+                    model="chirp_3",
+                    features=cloud_speech.RecognitionFeatures(
+                        enable_word_time_offsets=True,
+                        diarization_config=cloud_speech.SpeakerDiarizationConfig(
+                            min_speaker_count=1,
+                            max_speaker_count=4,
+                        ),
+                    ),
+                )
+
+                file_metadata = cloud_speech.BatchRecognizeFileMetadata(
+                    uri=gcs_uri
+                )
+                inline_output_config = cloud_speech.InlineOutputConfig()
+
+                request = cloud_speech.BatchRecognizeRequest(
+                    recognizer=f"projects/{self.project_id}/locations/{self.region}/recognizers/_",
+                    config=config,
+                    files=[file_metadata],
+                    recognition_output_config=cloud_speech.RecognitionOutputConfig(
+                        inline_response_config=inline_output_config
+                    ),
+                )
+
+                operation = self.speech_client.batch_recognize(request=request)
+                response = operation.result(timeout=600)
+
+                for _, file_res in response.results.items():
+                    err_code = getattr(
+                        getattr(file_res, "error", None), "code", 0
+                    )
+                    if isinstance(err_code, int) and err_code != 0:
+                        raise RuntimeError(
+                            f"Speech-to-Text v2 error ({err_code}): {getattr(file_res.error, 'message', '')}"
+                        )
+                    if (
+                        not hasattr(file_res, "transcript")
+                        or not file_res.transcript
+                    ):
+                        continue
+                    for result in file_res.transcript.results:
+                        if not result.alternatives:
+                            continue
+                        alt = result.alternatives[0]
+                        full_transcript_parts.append(alt.transcript)
+                        for w in alt.words:
+                            start_sec = (
+                                w.start_offset.total_seconds()
+                                if hasattr(w.start_offset, "total_seconds")
+                                else (
+                                    w.start_offset.seconds
+                                    + w.start_offset.nanos / 1e9
+                                )
+                            )
+                            end_sec = (
+                                w.end_offset.total_seconds()
+                                if hasattr(w.end_offset, "total_seconds")
+                                else (
+                                    w.end_offset.seconds
+                                    + w.end_offset.nanos / 1e9
+                                )
+                            )
+                            speaker_tag = (
+                                str(w.speaker_label)
+                                if hasattr(w, "speaker_label")
+                                and w.speaker_label
+                                else "1"
+                            )
+                            words_data.append(
+                                {
+                                    "word": w.word,
+                                    "start_time": round(start_sec, 3),
+                                    "end_time": round(end_sec, 3),
+                                    "speaker": f"Speaker {speaker_tag}",
+                                }
+                            )
+
+            return {
+                "full_text": " ".join(full_transcript_parts),
+                "words": words_data,
+            }
+        finally:
+            if temp_wav_path and os.path.exists(temp_wav_path):
+                try:
+                    os.remove(temp_wav_path)
+                except Exception:
+                    pass
+            if staged_blob:
+                try:
+                    staged_blob.delete()
+                except Exception:
+                    pass
+
+    def _refine_chunk_gemini(
+        self, chunk_words: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Refines a single chunk of words with Gemini."""
+        if not chunk_words:
+            return []
+
+        prompt = f"""
+You are an expert subtitle editor.
+Given a list of words with word-level start_time, end_time, and speaker tags, group them into clean subtitle segments.
+
+STRICT CONSTRAINTS:
+1. Maximum 42 characters per line (<= 42 chars/line).
+2. Segment start_time MUST be start_time of its first word; end_time MUST be end_time of its last word.
+3. Fix capitalization and punctuation naturally.
+4. Return ONLY a valid JSON list of objects with fields:
+   - "speaker": string
+   - "start_time": float
+   - "end_time": float
+   - "text": string
+
+Word timing data:
+{json.dumps(chunk_words, separators=(',', ':'))}
+"""
+        candidate_models = ["gemini-2.5-flash", "gemini-1.5-flash"]
+        raw_response_text = ""
+
+        if self.genai_client:
+            for model in candidate_models:
+                try:
+                    config_kwargs: Dict[str, Any] = {
+                        "response_mime_type": "application/json"
+                    }
+                    if "2.5" in model or "thinking" in model:
+                        config_kwargs["thinking_config"] = types.ThinkingConfig(
+                            thinking_budget=0
+                        )
+                    res = self.genai_client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(**config_kwargs),
+                    )
+                    raw_response_text = res.text.strip()
+                    break
+                except Exception as e:
+                    logger.warning(
+                        f"Gemini chunk refinement with '{model}' failed: {e}"
+                    )
+                    continue
+
+        if not raw_response_text:
+            return self._fallback_rule_based_segmenter(chunk_words)
+
+        try:
+            segments = json.loads(raw_response_text)
+            if isinstance(segments, list):
+                return segments
+        except Exception:
+            pass
+
+        return self._fallback_rule_based_segmenter(chunk_words)
+
+    def refine_gemini36(
+        self, raw_transcript_data: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Refines raw transcript words using parallel chunked Gemini calls."""
+        words_data = raw_transcript_data.get("words", [])
+        if not words_data:
+            return []
+
+        chunk_size = 75
+        if len(words_data) <= chunk_size:
+            segments = self._refine_chunk_gemini(words_data)
+        else:
+            chunks = [
+                words_data[i : i + chunk_size]
+                for i in range(0, len(words_data), chunk_size)
+            ]
+            logger.info(
+                f"Refining {len(words_data)} words across {len(chunks)} parallel chunks..."
+            )
+            segments = []
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(len(chunks), 4)
+            ) as executor:
+                results = list(executor.map(self._refine_chunk_gemini, chunks))
+                for chunk_segs in results:
+                    segments.extend(chunk_segs)
+
+        return self._enforce_max_char_limit(segments, max_chars=42)
+
+    def _enforce_max_char_limit(
+        self, segments: List[Dict[str, Any]], max_chars: int = 42
+    ) -> List[Dict[str, Any]]:
+        """Splits long subtitle segments to guarantee <= max_chars per line."""
+        refined = []
+        for seg in segments:
+            text = seg.get("text", "").strip()
+            if len(text) <= max_chars:
+                refined.append(seg)
+                continue
+
+            words = text.split()
+            speaker = seg.get("speaker", "Speaker 1")
+            total_start = seg.get("start_time", 0.0)
+            total_end = seg.get("end_time", 0.0)
+            total_duration = max(total_end - total_start, 0.1)
+
+            sub_lines = []
+            curr_words: List[str] = []
+            curr_len = 0
+            for w in words:
+                word_len = len(w) + (1 if curr_words else 0)
+                if curr_len + word_len <= max_chars:
+                    curr_words.append(w)
+                    curr_len += word_len
+                else:
+                    if curr_words:
+                        sub_lines.append(" ".join(curr_words))
+                    curr_words = [w]
+                    curr_len = len(w)
+            if curr_words:
+                sub_lines.append(" ".join(curr_words))
+
+            total_chars = sum(len(sl) for sl in sub_lines) or 1
+            curr_time = total_start
+            for sl in sub_lines:
+                frac = len(sl) / total_chars
+                line_duration = frac * total_duration
+                line_end = round(curr_time + line_duration, 3)
+                refined.append(
+                    {
+                        "speaker": speaker,
+                        "start_time": round(curr_time, 3),
+                        "end_time": line_end,
+                        "text": sl,
+                    }
+                )
+                curr_time = line_end
+
+        return refined
+
+    def _fallback_rule_based_segmenter(
+        self, words_data: List[Dict[str, Any]], max_chars: int = 42
+    ) -> List[Dict[str, Any]]:
+        """Rule-based fallback segmentation when LLM refinement is unavailable."""
+        segments: List[Dict[str, Any]] = []
+        if not words_data:
+            return segments
+
+        curr_words: List[str] = []
+        curr_len = 0
+        curr_speaker = words_data[0].get("speaker", "Speaker 1")
+        start_time = words_data[0].get("start_time", 0.0)
+
+        for item in words_data:
+            w = item["word"]
+            word_len = len(w) + (1 if curr_words else 0)
+            if (
+                curr_len + word_len <= max_chars
+                and item.get("speaker") == curr_speaker
+            ):
+                curr_words.append(w)
+                curr_len += word_len
+            else:
+                if curr_words:
+                    end_time = item["start_time"]
+                    segments.append(
+                        {
+                            "speaker": curr_speaker,
+                            "start_time": start_time,
+                            "end_time": end_time,
+                            "text": " ".join(curr_words),
+                        }
+                    )
+                curr_words = [w]
+                curr_len = len(w)
+                curr_speaker = item.get("speaker", "Speaker 1")
+                start_time = item["start_time"]
+
+        if curr_words and words_data:
+            segments.append(
+                {
+                    "speaker": curr_speaker,
+                    "start_time": start_time,
+                    "end_time": words_data[-1]["end_time"],
+                    "text": " ".join(curr_words),
+                }
+            )
+
+        return segments
+
+    def export_vtt_srt(
+        self, subtitle_data: List[Dict[str, Any]], vtt_path: str, srt_path: str
+    ) -> Dict[str, str]:
+        """Export subtitle data to WebVTT (.vtt) and SubRip SRT (.srt) files."""
+        vtt_lines = ["WEBVTT\n"]
+        srt_lines = []
+
+        valid_idx = 1
+        for seg in subtitle_data:
+            start_sec = float(
+                seg.get("start_time")
+                if seg.get("start_time") is not None
+                else seg.get("startTime") or 0.0
+            )
+            end_sec = float(
+                seg.get("end_time")
+                if seg.get("end_time") is not None
+                else seg.get("endTime") or (start_sec + 1.0)
+            )
+            text = str(seg.get("text", "")).strip()
+            if not text:
+                continue
+
+            start_vtt = self._format_vtt_timestamp(start_sec)
+            end_vtt = self._format_vtt_timestamp(end_sec)
+            vtt_lines.append(
+                f"{valid_idx}\n{start_vtt} --> {end_vtt}\n{text}\n"
+            )
+
+            start_srt = self._format_srt_timestamp(start_sec)
+            end_srt = self._format_srt_timestamp(end_sec)
+            srt_lines.append(
+                f"{valid_idx}\n{start_srt} --> {end_srt}\n{text}\n"
+            )
+            valid_idx += 1
+
+        with open(vtt_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(vtt_lines))
+
+        with open(srt_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(srt_lines))
+
+        return {"vtt": vtt_path, "srt": srt_path}
+
+    def burn_subtitles_ffmpeg(
+        self, video_path: str, subtitle_path: str, output_video_path: str
+    ) -> str:
+        """Hardburn subtitles into MP4 using FFmpeg CLI."""
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"Input video file not found: {video_path}")
+        if not os.path.exists(subtitle_path):
+            raise FileNotFoundError(f"Subtitle file not found: {subtitle_path}")
+
+        escaped_sub_path = (
+            subtitle_path.replace("\\", "/")
+            .replace(":", "\\:")
+            .replace("'", "'\\''")
+            .replace("[", "\\[")
+            .replace("]", "\\]")
+        )
+        filter_str = f"subtitles='{escaped_sub_path}'"
+        temp_output_path = output_video_path + ".tmp.mp4"
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            video_path,
+            "-vf",
+            filter_str,
+            "-c:v",
+            "libx264",
+            "-profile:v",
+            "high",
+            "-level",
+            "4.0",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            "30",
+            "-preset",
+            "fast",
+            "-crf",
+            "23",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            "-movflags",
+            "+faststart",
+            temp_output_path,
+        ]
+
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if res.returncode != 0:
+            if os.path.exists(temp_output_path):
+                os.remove(temp_output_path)
+            raise RuntimeError(f"FFmpeg subtitle burning failed: {res.stderr}")
+
+        os.replace(temp_output_path, output_video_path)
+        return output_video_path
+
+    def embed_soft_subtitles_ffmpeg(
+        self, video_path: str, subtitle_path: str, output_video_path: str
+    ) -> str:
+        """Embed soft toggleable subtitles into MP4 container using FFmpeg."""
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"Input video file not found: {video_path}")
+        if not os.path.exists(subtitle_path):
+            raise FileNotFoundError(f"Subtitle file not found: {subtitle_path}")
+
+        temp_output_path = output_video_path + ".tmp.mp4"
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            video_path,
+            "-i",
+            subtitle_path,
+            "-c:v",
+            "copy",
+            "-c:a",
+            "copy",
+            "-c:s",
+            "mov_text",
+            "-metadata:s:s:0",
+            "language=eng",
+            "-movflags",
+            "+faststart",
+            temp_output_path,
+        ]
+
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            if os.path.exists(temp_output_path):
+                os.remove(temp_output_path)
+            raise RuntimeError(
+                f"FFmpeg soft subtitle embedding failed: {res.stderr}"
+            )
+
+        os.replace(temp_output_path, output_video_path)
+        return output_video_path
+
+    def process_video(
+        self,
+        video_path: str,
+        job_dir: Optional[str] = None,
+        generate_burned_in: bool = True,
+        language_code: str = "en-US",
+        progress_callback: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """Runs complete subtitle extraction, refinement, and rendering pipeline."""
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(
+                f"Source video file not found: {video_path}"
+            )
+
+        if not job_dir:
+            job_dir = os.path.dirname(video_path)
+        os.makedirs(job_dir, exist_ok=True)
+
+        if progress_callback:
+            progress_callback("extracting", 15)
+
+        vtt_path = os.path.join(job_dir, "subtitles.vtt")
+        srt_path = os.path.join(job_dir, "subtitles.srt")
+        toggleable_video_path = os.path.join(job_dir, "output_toggleable.mp4")
+        burned_in_video_path = (
+            os.path.join(job_dir, "output_burned_in.mp4")
+            if generate_burned_in
+            else None
+        )
+
+        if progress_callback:
+            progress_callback("transcribing", 35)
+
+        raw_asr = self.transcribe_chirp3(
+            video_path, language_code=language_code
+        )
+
+        if progress_callback:
+            progress_callback("formatting", 65)
+
+        refined_subtitles = self.refine_gemini36(raw_asr)
+        self.export_vtt_srt(refined_subtitles, vtt_path, srt_path)
+
+        if progress_callback:
+            progress_callback("packaging", 85)
+
+        self.embed_soft_subtitles_ffmpeg(
+            video_path, vtt_path, toggleable_video_path
+        )
+
+        # Save word-level transcript metadata
+        transcript_json_path = os.path.join(job_dir, "transcript.json")
+        try:
+            with open(transcript_json_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "full_text": raw_asr.get("full_text", ""),
+                        "segments": refined_subtitles,
+                        "words": raw_asr.get("words", []),
+                    },
+                    f,
+                    indent=2,
+                )
+        except Exception as e:
+            logger.warning(f"Could not write transcript.json: {e}")
+
+        if generate_burned_in and burned_in_video_path:
+            try:
+                self.burn_subtitles_ffmpeg(
+                    video_path, vtt_path, burned_in_video_path
+                )
+            except Exception as e:
+                logger.warning(f"Hardburn video generation skipped/failed: {e}")
+
+        if progress_callback:
+            progress_callback("completed", 100)
+
+        return {
+            "job_dir": job_dir,
+            "source_video": video_path,
+            "default_toggleable_video": toggleable_video_path,
+            "burned_in_video": burned_in_video_path,
+            "subtitles_vtt": vtt_path,
+            "subtitles_srt": srt_path,
+            "transcript_json": transcript_json_path,
+            "segment_count": len(refined_subtitles),
+            "transcript_text": raw_asr.get("full_text", ""),
+        }
+
+    @staticmethod
+    def _format_vtt_timestamp(seconds: float) -> str:
+        total_ms = int(round(seconds * 1000))
+        ms = total_ms % 1000
+        total_sec = total_ms // 1000
+        hrs = total_sec // 3600
+        mins = (total_sec % 3600) // 60
+        secs = total_sec % 60
+        return f"{hrs:02d}:{mins:02d}:{secs:02d}.{ms:03d}"
+
+    @staticmethod
+    def _format_srt_timestamp(seconds: float) -> str:
+        total_ms = int(round(seconds * 1000))
+        ms = total_ms % 1000
+        total_sec = total_ms // 1000
+        hrs = total_sec // 3600
+        mins = (total_sec % 3600) // 60
+        secs = total_sec % 60
+        return f"{hrs:02d}:{mins:02d}:{secs:02d},{ms:03d}"
+
+
+class SubtitleService:
+    """Service wrapper for managing async subtitle jobs."""
+
+    def __init__(self) -> None:
+        self.engine = PodcastSubtitleEngine()
+        self.jobs: Dict[str, SubtitleResponseDTO] = {}
+
+    def create_job(self) -> str:
+        """Create a new tracked subtitle job."""
+        if len(self.jobs) >= 100:
+            oldest_job = next(iter(self.jobs))
+            del self.jobs[oldest_job]
+
+        job_id = f"sub_{uuid.uuid4().hex[:12]}"
+        self.jobs[job_id] = SubtitleResponseDTO(
+            job_id=job_id,
+            status="pending",
+            step="idle",
+            progress=0,
+        )
+        return job_id
+
+    def get_job_status(self, job_id: str) -> Optional[SubtitleResponseDTO]:
+        """Retrieve job status DTO."""
+        return self.jobs.get(job_id)
+
+    def resolve_output_dir(
+        self, package_name: Optional[str] = None, job_id: str = ""
+    ) -> str:
+        """Resolves target local workspace directory for storing deliverables."""
+        configured_dir = getattr(
+            config_service, "SUBTITLES_OUTPUT_DIR", None
+        ) or os.getenv("SUBTITLES_OUTPUT_DIR")
+        if configured_dir:
+            base_dir = os.path.abspath(configured_dir)
+        elif os.path.exists("/app"):
+            base_dir = "/app/output_subtitles"
+        else:
+            # Locate repo root by walking up from current module file
+            curr = os.path.abspath(__file__)
+            for _ in range(5):
+                curr = os.path.dirname(curr)
+                if (
+                    os.path.exists(os.path.join(curr, ".git"))
+                    or os.path.basename(curr)
+                    == "diligent-podcast-transcription"
+                ):
+                    base_dir = os.path.join(curr, "output_subtitles")
+                    break
+            else:
+                base_dir = os.path.abspath("./output_subtitles")
+
+        if package_name and package_name.strip():
+            clean_name = re.sub(r"[^a-zA-Z0-9_\- ]", "", package_name).strip()
+            folder_name = clean_name or f"job_{job_id}"
+        else:
+            folder_name = f"job_{job_id}_{int(time.time())}"
+
+        candidate_dir = os.path.join(base_dir, folder_name)
+        if os.path.exists(candidate_dir) and any(
+            os.path.isfile(os.path.join(candidate_dir, f))
+            for f in os.listdir(candidate_dir)
+        ):
+            # Auto-version to prevent overwriting existing podcast deliverable packages
+            version = 2
+            while True:
+                versioned_dir = os.path.join(
+                    base_dir, f"{folder_name}_v{version}"
+                )
+                if not os.path.exists(versioned_dir) or not any(
+                    os.path.isfile(os.path.join(versioned_dir, f))
+                    for f in os.listdir(versioned_dir)
+                ):
+                    candidate_dir = versioned_dir
+                    break
+                version += 1
+
+        os.makedirs(candidate_dir, exist_ok=True)
+        try:
+            os.chmod(candidate_dir, 0o777)
+        except Exception:
+            pass
+        return candidate_dir
+
+    def process_job(
+        self,
+        job_id: str,
+        video_path: str,
+        burn_subtitles: bool = False,
+        output_format: str = "vtt",
+        language_code: str = "en-US",
+        package_name: Optional[str] = None,
+        job_dir: Optional[str] = None,
+    ) -> SubtitleResponseDTO:
+        """Process a subtitle job and update tracking state."""
+        if job_id not in self.jobs:
+            self.jobs[job_id] = SubtitleResponseDTO(
+                job_id=job_id, status="pending", step="idle", progress=0
+            )
+
+        job = self.jobs[job_id]
+        job.status = "processing"
+        job.step = "extracting"
+        job.progress = 10
+
+        if not job_dir:
+            job_dir = self.resolve_output_dir(
+                package_name=package_name, job_id=job_id
+            )
+
+        def update_progress(step: str, prog: int) -> None:
+            job.step = step
+            job.progress = prog
+
+        try:
+            result = self.engine.process_video(
+                video_path=video_path,
+                job_dir=job_dir,
+                generate_burned_in=burn_subtitles,
+                language_code=language_code,
+                progress_callback=update_progress,
+            )
+
+            job.status = "completed"
+            job.step = "completed"
+            job.progress = 100
+            job.subtitles_vtt = result.get("subtitles_vtt")
+            job.subtitles_srt = result.get("subtitles_srt")
+            job.default_toggleable_video = result.get(
+                "default_toggleable_video"
+            )
+            job.burned_in_video = result.get("burned_in_video")
+            job.segment_count = result.get("segment_count", 0)
+            job.transcript_text = result.get("transcript_text", "")
+            job.local_output_dir = os.path.abspath(job_dir)
+            job.subtitle_url = (
+                result.get("subtitles_vtt")
+                if output_format == "vtt"
+                else result.get("subtitles_srt")
+            )
+            job.processed_video_url = (
+                result.get("burned_in_video")
+                if burn_subtitles
+                else result.get("default_toggleable_video")
+            )
+        except Exception as e:
+            logger.error(f"Subtitle job {job_id} failed: {e}", exc_info=True)
+            job.status = "failed"
+            job.step = "failed"
+            job.error_message = str(e)
+
+        return job
+
+
+subtitle_service = SubtitleService()

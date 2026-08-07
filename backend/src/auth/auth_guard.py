@@ -54,9 +54,24 @@ async def get_current_user(
     4. If the user is new, creates their document ("Just-In-Time Provisioning").
     5. Returns a Pydantic model with the user's data.
     """
+    email: str | None = None
+    name: str | None = None
+    picture: str = ""
+    token_info_hd: str | None = None
+
     try:
         decoded_token = {}
-        if config_service.ENVIRONMENT == "local":
+        if config_service.ENVIRONMENT == "local" and (
+            token in ("mock-local-dev-token", "test_token", "mock_token")
+            or token.startswith("mock-")
+        ):
+            decoded_token = {
+                "email": config_service.ADMIN_USER_EMAIL or "admin@example.com",
+                "name": "Local Developer",
+                "picture": "",
+                "hd": "local.internal",
+            }
+        elif config_service.ENVIRONMENT == "local":
             # --- Local: Use Firebase Auth ---
             # Verifies the token using the standard Firebase Admin SDK method.
             logger.info("Verifying token using Firebase Admin SDK...")

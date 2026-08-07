@@ -1,0 +1,103 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import {HttpClient} from '@angular/common/http';
+import {Injectable} from '@angular/core';
+import {Observable} from 'rxjs';
+import {environment} from '../../../environments/environment';
+
+export interface SubtitleResponse {
+  job_id: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  subtitle_url?: string;
+  processed_video_url?: string;
+  transcript_text?: string;
+  error_message?: string;
+  default_toggleable_video?: string;
+  burned_in_video?: string;
+  subtitles_vtt?: string;
+  subtitles_srt?: string;
+  segment_count?: number;
+  local_output_dir?: string;
+  step?: string;
+  progress?: number;
+}
+
+export interface SubtitleGenerationParams {
+  file?: File | null;
+  videoUrl?: string;
+  packageName?: string;
+  languageCode?: string;
+  outputFormat?: string;
+  burnSubtitles?: boolean;
+}
+
+@Injectable({
+  providedIn: 'root',
+})
+export class SubtitlesService {
+  private readonly baseUrl = `${environment.backendURL}/v1/custom/subtitles`;
+
+  constructor(private http: HttpClient) {}
+
+  generateSubtitles(
+    params: SubtitleGenerationParams,
+  ): Observable<SubtitleResponse> {
+    if (params.file) {
+      const formData = new FormData();
+      formData.append('file', params.file, params.file.name);
+      if (params.packageName) {
+        formData.append('package_name', params.packageName);
+      }
+      if (params.languageCode) {
+        formData.append('language_code', params.languageCode);
+      }
+      if (params.outputFormat) {
+        formData.append('output_format', params.outputFormat);
+      }
+      formData.append('burn_subtitles', String(!!params.burnSubtitles));
+
+      return this.http.post<SubtitleResponse>(
+        `${this.baseUrl}/generate`,
+        formData,
+      );
+    }
+
+    return this.http.post<SubtitleResponse>(`${this.baseUrl}/generate`, {
+      video_url: params.videoUrl || '',
+      package_name: params.packageName || '',
+      language_code: params.languageCode || 'en-US',
+      output_format: params.outputFormat || 'vtt',
+      burn_subtitles: !!params.burnSubtitles,
+    });
+  }
+
+  getJobStatus(jobId: string): Observable<SubtitleResponse> {
+    return this.http.get<SubtitleResponse>(`${this.baseUrl}/status/${jobId}`);
+  }
+
+  downloadFile(
+    jobId: string,
+    fileType: 'vtt' | 'srt' | 'toggleable_video' | 'burned_in_video',
+  ): Observable<Blob> {
+    return this.http.get(
+      `${this.baseUrl}/download/${jobId}?file_type=${fileType}`,
+      {
+        responseType: 'blob',
+      },
+    );
+  }
+}
