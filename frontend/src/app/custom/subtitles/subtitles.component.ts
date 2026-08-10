@@ -186,7 +186,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
         this.processingStep.set(res.status as SubtitleStep);
         if (res.status === 'completed') {
           if (res.segments) {
-            this.segments.set(res.segments);
+            this.segmentsList.set(res.segments);
           }
           if (res.title) {
             this.packageName.set(res.title);
