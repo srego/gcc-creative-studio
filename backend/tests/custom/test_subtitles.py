@@ -910,17 +910,23 @@ async def test_save_job_to_gallery():
 
     mock_db = MagicMock()
     mock_db.add = MagicMock()
-    mock_db.commit = AsyncMock() if hasattr(MagicMock, "AsyncMock") else MagicMock()
-    mock_db.refresh = AsyncMock() if hasattr(MagicMock, "AsyncMock") else MagicMock()
+    mock_db.commit = (
+        AsyncMock() if hasattr(MagicMock, "AsyncMock") else MagicMock()
+    )
+    mock_db.refresh = (
+        AsyncMock() if hasattr(MagicMock, "AsyncMock") else MagicMock()
+    )
 
-    with patch.object(
-        service, "get_artifact_file", return_value="/tmp/output.mp4"
-    ), patch.object(
-        service,
-        "_upload_artifact_to_gcs",
-        return_value="gs://bucket/subtitles_outputs/sub_gal_1/output.mp4",
-    ), patch(
-        "os.path.exists", return_value=True
+    with (
+        patch.object(
+            service, "get_artifact_file", return_value="/tmp/output.mp4"
+        ),
+        patch.object(
+            service,
+            "_upload_artifact_to_gcs",
+            return_value="gs://bucket/subtitles_outputs/sub_gal_1/output.mp4",
+        ),
+        patch("os.path.exists", return_value=True),
     ):
         asset = await service.save_job_to_gallery(
             job_id="sub_gal_1",
@@ -931,7 +937,7 @@ async def test_save_job_to_gallery():
             title="Podcast Subtitled",
         )
         assert asset is not None
-        assert asset.name == "Podcast Subtitled"
+        assert asset.original_filename == "Podcast Subtitled.mp4"
         assert asset.workspace_id == 1
         assert asset.user_id == 42
 
@@ -943,7 +949,7 @@ def test_controller_save_to_gallery_endpoint(api_client):
 
     mock_asset = MagicMock(spec=SourceAsset)
     mock_asset.id = 99
-    mock_asset.name = "My Saved Video"
+    mock_asset.original_filename = "My Saved Video.mp4"
     mock_asset.gcs_uri = "gs://bucket/video.mp4"
 
     with patch.object(
@@ -953,10 +959,14 @@ def test_controller_save_to_gallery_endpoint(api_client):
     ):
         response = api_client.post(
             "/api/v1/custom/subtitles/save-to-gallery",
-            json={"job_id": "sub_gal_1", "workspace_id": 1, "title": "My Saved Video"},
+            json={
+                "job_id": "sub_gal_1",
+                "workspace_id": 1,
+                "title": "My Saved Video",
+            },
         )
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
         assert data["asset_id"] == 99
-        assert data["asset_name"] == "My Saved Video"
+        assert data["asset_name"] == "My Saved Video.mp4"

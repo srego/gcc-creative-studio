@@ -150,7 +150,9 @@ class SaveToGalleryRequestDTO(BaseModel):
 class SaveToGalleryResponseDTO(BaseModel):
     """Response model indicating successful persistence into the Media Gallery."""
 
-    success: bool = Field(description="Whether the asset was saved successfully.")
+    success: bool = Field(
+        description="Whether the asset was saved successfully."
+    )
     asset_id: int = Field(description="Database ID of the created SourceAsset.")
     asset_name: str = Field(description="Name of the saved asset.")
     gcs_uri: str = Field(description="GCS URI of the saved asset.")

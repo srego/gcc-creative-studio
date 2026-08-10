@@ -345,7 +345,7 @@ async def save_to_media_gallery(
     return SaveToGalleryResponseDTO(
         success=True,
         asset_id=saved_asset.id,
-        asset_name=saved_asset.name,
+        asset_name=saved_asset.original_filename,
         gcs_uri=saved_asset.gcs_uri,
         message="Successfully saved subtitled package to Media Gallery.",
     )

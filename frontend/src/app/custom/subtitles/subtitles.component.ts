@@ -558,7 +558,9 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
             : err instanceof Error
               ? err.message
               : 'Failed to save asset to Media Gallery.';
-        this.errorMessage.set(detail || 'Failed to save asset to Media Gallery.');
+        this.errorMessage.set(
+          detail || 'Failed to save asset to Media Gallery.',
+        );
       },
     });
   }

@@ -16,6 +16,7 @@
 
 import concurrent.futures
 import datetime
+import hashlib
 import json
 import logging
 import os
@@ -1174,9 +1175,7 @@ class SubtitleService:
         if not job or job.status != "completed":
             return None
 
-        zip_dir = os.path.join(
-            "/tmp", "subtitles_zip", job_id
-        )
+        zip_dir = os.path.join("/tmp", "subtitles_zip", job_id)
         os.makedirs(zip_dir, exist_ok=True)
         zip_path = os.path.join(zip_dir, f"subtitle_package_{job_id}.zip")
 
@@ -1240,7 +1239,11 @@ class SubtitleService:
                     f"Error checking GCS bucket for output video: {e}"
                 )
 
-        if not gcs_uri and local_video_path and os.path.exists(local_video_path):
+        if (
+            not gcs_uri
+            and local_video_path
+            and os.path.exists(local_video_path)
+        ):
             gcs_uri = self._upload_artifact_to_gcs(job_id, local_video_path)
 
         if not gcs_uri:
@@ -1248,16 +1251,17 @@ class SubtitleService:
             gcs_uri = f"gs://{self.engine.gcs_bucket_name}/subtitles_outputs/{job_id}/output_burned.mp4"
 
         asset_name = title or f"Subtitled Video ({job_id[:8]})"
+        file_hash = hashlib.sha256(f"{job_id}_{gcs_uri}".encode()).hexdigest()
         source_asset = SourceAsset(
             workspace_id=workspace_id,
             user_id=user_id,
-            name=asset_name,
-            original_file_name=f"{asset_name}.mp4",
+            original_filename=f"{asset_name}.mp4",
             gcs_uri=gcs_uri,
             mime_type=MimeTypeEnum.VIDEO_MP4,
             aspect_ratio=AspectRatioEnum.RATIO_16_9,
-            type=AssetTypeEnum.GENERIC_VIDEO,
+            asset_type=AssetTypeEnum.GENERIC_VIDEO,
             scope=AssetScopeEnum.PRIVATE,
+            file_hash=file_hash,
         )
         db.add(source_asset)
         await db.commit()
