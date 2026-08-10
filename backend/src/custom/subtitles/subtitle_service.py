@@ -275,14 +275,6 @@ class PodcastSubtitleEngine:
                 "full_text": " ".join(full_transcript_parts),
                 "words": words_data,
             }
-        except Exception as e:
-            logger.warning(
-                f"STT v2 recognition encountered an error: {e}. Falling back to Gemini Multimodal Transcription..."
-            )
-            return self.transcribe_multimodal_gemini(
-                audio_path_or_gcs_uri=gcs_uri,
-                language_code=language_code,
-            )
         finally:
             if temp_wav_path and os.path.exists(temp_wav_path):
                 try:
@@ -294,77 +286,6 @@ class PodcastSubtitleEngine:
                     staged_blob.delete()
                 except Exception:
                     pass
-
-    def transcribe_multimodal_gemini(
-        self, audio_path_or_gcs_uri: str, language_code: str = "en-US"
-    ) -> Dict[str, Any]:
-        """Transcribes audio using Vertex AI Gemini Multimodal as a resilient fallback."""
-        logger.info(
-            f"Transcribing audio with Gemini Multimodal: {audio_path_or_gcs_uri}"
-        )
-        prompt = f"""
-You are a high-precision speech-to-text audio transcriber.
-Transcribe the spoken audio in this media file in language '{language_code}'.
-Return a JSON object with:
-1. "full_text": complete string of transcribed speech.
-2. "words": a list of word objects with estimated timestamps:
-   - "word": string (single word)
-   - "start_time": float (seconds, e.g. 0.0)
-   - "end_time": float (seconds, e.g. 0.45)
-   - "speaker": string (e.g. "Speaker 1")
-"""
-        contents: List[Any] = []
-        if audio_path_or_gcs_uri.startswith("gs://"):
-            contents.append(
-                types.Part.from_uri(
-                    file_uri=audio_path_or_gcs_uri, mime_type="video/mp4"
-                )
-            )
-        elif os.path.exists(audio_path_or_gcs_uri):
-            with open(audio_path_or_gcs_uri, "rb") as f:
-                data = f.read()
-            contents.append(
-                types.Part.from_bytes(
-                    data=data,
-                    mime_type=(
-                        "video/mp4"
-                        if audio_path_or_gcs_uri.endswith(".mp4")
-                        else "audio/wav"
-                    ),
-                )
-            )
-        contents.append(prompt)
-
-        candidate_models = [
-            "gemini-2.5-flash",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
-        ]
-        if self.genai_client:
-            for model in candidate_models:
-                try:
-                    config_kwargs: Dict[str, Any] = {
-                        "response_mime_type": "application/json"
-                    }
-                    if "2.5" in model or "thinking" in model:
-                        config_kwargs["thinking_config"] = types.ThinkingConfig(
-                            thinking_budget=0
-                        )
-                    res = self.genai_client.models.generate_content(
-                        model=model,
-                        contents=contents,
-                        config=types.GenerateContentConfig(**config_kwargs),
-                    )
-                    data = json.loads(res.text.strip())
-                    if isinstance(data, dict) and "words" in data:
-                        return data
-                except Exception as exc:
-                    logger.warning(
-                        f"Gemini multimodal transcription failed with {model}: {exc}"
-                    )
-                    continue
-
-        return {"full_text": "", "words": []}
 
     def _refine_chunk_gemini(
         self, chunk_words: List[Dict[str, Any]]
