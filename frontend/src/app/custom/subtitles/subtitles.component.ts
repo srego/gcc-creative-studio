@@ -26,6 +26,7 @@ import {
   Inject,
 } from '@angular/core';
 import {MatDialog} from '@angular/material/dialog';
+import {ActivatedRoute} from '@angular/router';
 import {Subscription, timer, of, throwError} from 'rxjs';
 import {switchMap, catchError} from 'rxjs/operators';
 import {ImageSelectorComponent} from '../../common/components/image-selector/image-selector.component';
@@ -53,6 +54,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     private dialog: MatDialog,
     private subtitlesService: SubtitlesService,
     private workspaceStateService: WorkspaceStateService,
+    private route: ActivatedRoute,
     @Inject(PLATFORM_ID) private platformId: object,
   ) {}
 
@@ -150,7 +152,59 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     return this.packageName().trim() || this.suggestedPackageName();
   });
 
-  ngOnInit(): void {}
+  ngOnInit(): void {
+    this.route.queryParamMap.subscribe(params => {
+      const jobId = params.get('job_id');
+      const gcsUri = params.get('gcs_uri');
+      const title = params.get('title');
+
+      if (jobId) {
+        this.loadExistingJob(jobId);
+      } else if (gcsUri) {
+        this.activeTab.set('gallery');
+        this.selectedGalleryAsset.set({
+          id: 'gallery_source',
+          title: title || 'Gallery Video',
+          url: gcsUri,
+        });
+        if (title) {
+          this.packageName.set(title);
+        }
+      }
+    });
+  }
+
+  loadExistingJob(jobId: string): void {
+    this.activeJobId.set(jobId);
+    this.isProcessing.set(true);
+    this.processingStep.set('uploading');
+    this.subtitlesService.getJobStatus(jobId).subscribe({
+      next: res => {
+        this.isProcessing.set(false);
+        this.activeJobId.set(res.job_id);
+        this.progressPercentage.set(res.progress || 100);
+        this.processingStep.set(res.status as SubtitleStep);
+        if (res.status === 'completed') {
+          if (res.segments) {
+            this.segments.set(res.segments);
+          }
+          if (res.title) {
+            this.packageName.set(res.title);
+          }
+          if (res.burned_in_video) {
+            this.enableBurnedInVideo.set(true);
+          }
+        }
+      },
+      error: err => {
+        this.isProcessing.set(false);
+        this.processingStep.set('failed');
+        this.errorMessage.set(
+          `Could not load subtitle job ${jobId}: ${err?.message || 'Not found'}`,
+        );
+      },
+    });
+  }
 
   ngOnDestroy(): void {
     this.stopPolling();
@@ -469,7 +523,6 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   readonly savedAssetId = signal<number | null>(null);
   readonly savedItemsCount = signal<number>(0);
   readonly savedFilenames = signal<string[]>([]);
-  readonly isDownloadingZip = signal<boolean>(false);
   readonly isDownloadingFile = signal<string | null>(null);
 
   private triggerBrowserDownload(blob: Blob, filename: string): void {
@@ -552,40 +605,6 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
           }
         }
         this.errorMessage.set(`Failed to download Burned-In MP4 video: ${msg}`);
-      },
-    });
-  }
-
-  downloadAllZip(): void {
-    const jobId = this.activeJobId();
-    if (
-      !jobId ||
-      !isPlatformBrowser(this.platformId) ||
-      this.isDownloadingZip()
-    )
-      return;
-
-    this.isDownloadingZip.set(true);
-    this.subtitlesService.downloadFile(jobId, 'zip').subscribe({
-      next: blob => {
-        this.isDownloadingZip.set(false);
-        this.triggerBrowserDownload(
-          blob,
-          `${this.currentPackageDisplayName()}_package.zip`,
-        );
-      },
-      error: async err => {
-        this.isDownloadingZip.set(false);
-        let msg = err?.message || 'Server error';
-        if (err?.error instanceof Blob) {
-          try {
-            const parsed = JSON.parse(await err.error.text());
-            msg = parsed?.detail || msg;
-          } catch {
-            // fallback
-          }
-        }
-        this.errorMessage.set(`Failed to download ZIP bundle: ${msg}`);
       },
     });
   }

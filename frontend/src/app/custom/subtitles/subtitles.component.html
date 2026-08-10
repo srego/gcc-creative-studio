@@ -412,22 +412,6 @@
               </button>
             </div>
 
-            <!-- Download Complete ZIP Package Button -->
-            <button
-              (click)="downloadAllZip()"
-              [disabled]="!isComplete() || isDownloadingZip()"
-              [ngClass]="{'opacity-50 pointer-events-none': !isComplete() || isDownloadingZip()}"
-              class="w-full py-2.5 px-4 rounded-xl bg-neutral-900/80 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 text-neutral-300 hover:text-white text-xs font-medium transition-all flex items-center justify-between group cursor-pointer"
-            >
-              <div class="flex items-center gap-2">
-                <mat-icon *ngIf="!isDownloadingZip()" class="text-amber-400 text-base">folder_zip</mat-icon>
-                <mat-icon *ngIf="isDownloadingZip()" class="text-amber-400 text-base animate-spin">sync</mat-icon>
-                <span *ngIf="!isDownloadingZip()">Download All Deliverables (ZIP Archive)</span>
-                <span *ngIf="isDownloadingZip()">Preparing & Downloading ZIP Archive...</span>
-              </div>
-              <span class="text-[10px] text-neutral-400 font-mono">.zip</span>
-            </button>
-
             <!-- Save to Media Gallery Button -->
             <button
               (click)="saveToMediaGallery()"

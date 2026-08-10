@@ -27,12 +27,32 @@
     </button>
 
     <div class="flex items-center gap-4">
+      <!-- Direct Link back to Subtitles Studio for this job -->
+      <a *ngIf="mediaItem.rawData?.job_id"
+        [routerLink]="['/custom/subtitles']"
+        [queryParams]="{job_id: mediaItem.rawData.job_id}"
+        matTooltip="Open this video in Subtitles Studio to edit transcript or download caption files"
+        class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded inline-flex items-center gap-2">
+        <mat-icon>subtitles</mat-icon>
+        <span>Open in Subtitles Studio</span>
+      </a>
+
+      <!-- For other gallery videos: Quick Action to Add Subtitles -->
+      <a *ngIf="mediaItem.mimeType?.startsWith('video/') && !mediaItem.rawData?.job_id && mediaItem.gcsUris?.[0]"
+        [routerLink]="['/custom/subtitles']"
+        [queryParams]="{gcs_uri: mediaItem.gcsUris[0], title: mediaItem.prompt || 'Gallery Video'}"
+        matTooltip="Transcribe and generate subtitles for this video"
+        class="bg-purple-600/80 hover:bg-purple-600 text-white font-bold py-2 px-4 rounded inline-flex items-center gap-2">
+        <mat-icon>subtitles</mat-icon>
+        <span>Add Subtitles</span>
+      </a>
+
       <button *ngIf="isAdmin" (click)="createTemplateFromMediaItem()" matTooltip="Create Template from Media"
         class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded inline-flex items-center">
         <mat-icon>auto_stories</mat-icon>
         <span class="ml-2">Create Template</span>
-        </button>
-        </div>
+      </button>
+    </div>
   </div>
 
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">

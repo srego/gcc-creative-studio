@@ -1522,7 +1522,24 @@ class SubtitleService:
         if not thumbnail_gcs:
             thumbnail_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_packages/{package_name}/thumbnail.jpg"
 
-        # 4. Create and persist exactly ONE MediaItem in PostgreSQL
+        # 4. Assemble video URIs (burned-in video primary, source video secondary)
+        video_gcs_list = []
+        thumb_gcs_list = []
+        if burned_gcs:
+            video_gcs_list.append(burned_gcs)
+            if thumbnail_gcs:
+                thumb_gcs_list.append(thumbnail_gcs)
+        if source_gcs and source_gcs not in video_gcs_list:
+            video_gcs_list.append(source_gcs)
+            if thumbnail_gcs:
+                thumb_gcs_list.append(thumbnail_gcs)
+
+        if not video_gcs_list and primary_video_gcs:
+            video_gcs_list.append(primary_video_gcs)
+        if not thumb_gcs_list and thumbnail_gcs:
+            thumb_gcs_list.append(thumbnail_gcs)
+
+        # 5. Create and persist exactly ONE MediaItem in PostgreSQL
         media_item = MediaItem(
             workspace_id=workspace_id,
             user_id=user_id,
@@ -1533,8 +1550,8 @@ class SubtitleService:
             original_prompt=package_name,
             aspect_ratio=AspectRatioEnum.RATIO_16_9,
             status=JobStatusEnum.COMPLETED.value,
-            gcs_uris=[primary_video_gcs] if primary_video_gcs else [],
-            thumbnail_uris=[thumbnail_gcs] if thumbnail_gcs else [],
+            gcs_uris=video_gcs_list,
+            thumbnail_uris=thumb_gcs_list,
             source_assets=[],
             raw_data={
                 "job_id": job_id,
