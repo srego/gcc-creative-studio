@@ -192,7 +192,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
           );
         } else {
           this.isProcessing.set(true);
-          this.startPolling(res.job_id);
+          this.startPollingStatus(res.job_id);
         }
       },
       error: (err: HttpErrorResponse | Error | unknown) => {
