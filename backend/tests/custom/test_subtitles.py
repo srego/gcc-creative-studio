@@ -1149,6 +1149,11 @@ def test_process_video_gcs_and_callbacks():
         ),
         patch.object(
             engine,
+            "export_vtt_srt",
+            return_value={"vtt": "/tmp/test.vtt", "srt": "/tmp/test.srt"},
+        ),
+        patch.object(
+            engine,
             "burn_subtitles_ffmpeg",
             return_value="/tmp/test_burned.mp4",
         ),
