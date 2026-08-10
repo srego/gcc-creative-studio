@@ -878,3 +878,36 @@ def test_upload_artifact_and_get_artifact(tmp_path):
 
         # Test none returned on upload if path does not exist
         assert service._upload_artifact_to_gcs("sub_art_1", "/bad/path") is None
+
+
+def test_transcribe_multimodal_gemini_direct(tmp_path):
+    """Tests direct Gemini Multimodal transcription execution."""
+    engine = PodcastSubtitleEngine()
+    engine.genai_client = MagicMock()
+    mock_res = MagicMock()
+    mock_res.text = json.dumps(
+        {
+            "full_text": "Multimodal transcription success",
+            "words": [
+                {
+                    "word": "Multimodal",
+                    "start_time": 0.0,
+                    "end_time": 0.5,
+                    "speaker": "Speaker 1",
+                }
+            ],
+        }
+    )
+    engine.genai_client.models.generate_content.return_value = mock_res
+
+    dummy_audio = tmp_path / "sample.mp4"
+    dummy_audio.write_bytes(b"dummy mp4 data")
+
+    # Test local file
+    res = engine.transcribe_multimodal_gemini(str(dummy_audio))
+    assert res["full_text"] == "Multimodal transcription success"
+    assert len(res["words"]) == 1
+
+    # Test GCS URI
+    res_gcs = engine.transcribe_multimodal_gemini("gs://bucket/sample.mp4")
+    assert res_gcs["full_text"] == "Multimodal transcription success"
