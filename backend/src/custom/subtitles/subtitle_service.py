@@ -1124,11 +1124,12 @@ class SubtitleService:
                     and filename.endswith(".mp4")
                 ):
                     matched = True
-                elif (
-                    file_type
-                    in ("toggleable_video", "video", "source_video", "source")
-                    and filename.endswith(".mp4")
-                ):
+                elif file_type in (
+                    "toggleable_video",
+                    "video",
+                    "source_video",
+                    "source",
+                ) and filename.endswith(".mp4"):
                     matched = True
                 elif file_type in ("thumbnail", "thumbnail_jpg") and (
                     filename.endswith(".jpg") or filename.endswith(".png")
@@ -1243,23 +1244,30 @@ class SubtitleService:
             hasattr(job, "local_output_dir")
             and job.local_output_dir
             and os.path.exists(job.local_output_dir)
+            and os.path.isdir(job.local_output_dir)
         ):
-            for f in os.listdir(job.local_output_dir):
-                full_p = os.path.join(job.local_output_dir, f)
-                if os.path.isfile(full_p) and not f.startswith("."):
-                    artifacts_to_add.append((full_p, f))
+            try:
+                for f in os.listdir(job.local_output_dir):
+                    full_p = os.path.join(job.local_output_dir, f)
+                    if os.path.isfile(full_p) and not f.startswith("."):
+                        artifacts_to_add.append((full_p, f))
+            except Exception as e:
+                logger.debug(f"Error reading local output dir: {e}")
 
         # 2. Collect from /tmp/subtitles_outputs/{job_id}
         dest_dir = f"/tmp/subtitles_outputs/{job_id}"
-        if os.path.exists(dest_dir):
-            for f in os.listdir(dest_dir):
-                full_p = os.path.join(dest_dir, f)
-                if (
-                    os.path.isfile(full_p)
-                    and not f.startswith(".")
-                    and not any(arc == f for _, arc in artifacts_to_add)
-                ):
-                    artifacts_to_add.append((full_p, f))
+        if os.path.exists(dest_dir) and os.path.isdir(dest_dir):
+            try:
+                for f in os.listdir(dest_dir):
+                    full_p = os.path.join(dest_dir, f)
+                    if (
+                        os.path.isfile(full_p)
+                        and not f.startswith(".")
+                        and not any(arc == f for _, arc in artifacts_to_add)
+                    ):
+                        artifacts_to_add.append((full_p, f))
+            except Exception as e:
+                logger.debug(f"Error reading dest_dir: {e}")
 
         # 3. Pull directly from Cloud Storage if empty
         if self.engine.storage_client:
@@ -1410,15 +1418,21 @@ class SubtitleService:
             hasattr(job, "local_output_dir")
             and job.local_output_dir
             and os.path.exists(job.local_output_dir)
+            and os.path.isdir(job.local_output_dir)
         ):
-            for f in os.listdir(job.local_output_dir):
-                if (
-                    f.endswith(".mp4")
-                    and "burned" not in f
-                    and "toggleable" not in f
-                ):
-                    source_video_path = os.path.join(job.local_output_dir, f)
-                    break
+            try:
+                for f in os.listdir(job.local_output_dir):
+                    if (
+                        f.endswith(".mp4")
+                        and "burned" not in f
+                        and "toggleable" not in f
+                    ):
+                        source_video_path = os.path.join(
+                            job.local_output_dir, f
+                        )
+                        break
+            except Exception as e:
+                logger.debug(f"Error discovering source video: {e}")
         source_gcs = None
         if source_video_path and os.path.exists(source_video_path):
             source_gcs = self._upload_artifact_to_gcs(job_id, source_video_path)
@@ -1437,9 +1451,7 @@ class SubtitleService:
         # (e) ZIP Package
         zip_path = self.create_job_zip_package(job_id)
         zip_gcs = (
-            self._upload_artifact_to_gcs(job_id, zip_path)
-            if zip_path
-            else None
+            self._upload_artifact_to_gcs(job_id, zip_path) if zip_path else None
         )
         if not zip_gcs:
             zip_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_packages/{package_name}/{package_name}_package.zip"
@@ -1466,8 +1478,7 @@ class SubtitleService:
             or source_video_path
         )
         if (
-            not os.path.exists(local_thumb)
-            or os.path.getsize(local_thumb) == 0
+            not os.path.exists(local_thumb) or os.path.getsize(local_thumb) == 0
         ) and video_for_thumb:
             self.engine.generate_thumbnail(video_for_thumb, local_thumb)
 

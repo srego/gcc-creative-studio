@@ -912,6 +912,7 @@ async def test_save_job_to_gallery():
     mock_db.add = MagicMock()
     mock_db.commit = AsyncMock()
     mock_db.refresh = AsyncMock()
+    mock_db.execute = AsyncMock()
 
     with (
         patch.object(

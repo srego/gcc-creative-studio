@@ -490,7 +490,12 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
 
   downloadCaptions(type: 'vtt' | 'srt'): void {
     const jobId = this.activeJobId();
-    if (!jobId || !isPlatformBrowser(this.platformId) || this.isDownloadingFile()) return;
+    if (
+      !jobId ||
+      !isPlatformBrowser(this.platformId) ||
+      this.isDownloadingFile()
+    )
+      return;
 
     this.isDownloadingFile.set(type);
     this.subtitlesService.downloadFile(jobId, type).subscribe({
@@ -519,7 +524,12 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
 
   downloadVideo(): void {
     const jobId = this.activeJobId();
-    if (!jobId || !isPlatformBrowser(this.platformId) || this.isDownloadingFile()) return;
+    if (
+      !jobId ||
+      !isPlatformBrowser(this.platformId) ||
+      this.isDownloadingFile()
+    )
+      return;
 
     this.isDownloadingFile.set('video');
     this.subtitlesService.downloadFile(jobId, 'burned_in_video').subscribe({
@@ -548,7 +558,12 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
 
   downloadAllZip(): void {
     const jobId = this.activeJobId();
-    if (!jobId || !isPlatformBrowser(this.platformId) || this.isDownloadingZip()) return;
+    if (
+      !jobId ||
+      !isPlatformBrowser(this.platformId) ||
+      this.isDownloadingZip()
+    )
+      return;
 
     this.isDownloadingZip.set(true);
     this.subtitlesService.downloadFile(jobId, 'zip').subscribe({
