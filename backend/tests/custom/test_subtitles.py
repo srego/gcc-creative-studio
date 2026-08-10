@@ -14,6 +14,7 @@
 
 """Unit tests for the custom subtitle processing service and API endpoints."""
 
+import json
 import os
 import tempfile
 from unittest.mock import MagicMock, patch

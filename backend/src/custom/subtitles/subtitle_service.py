@@ -347,8 +347,8 @@ Return a JSON object with:
                         "response_mime_type": "application/json"
                     }
                     if "2.5" in model or "thinking" in model:
-                        config_kwargs["thinking_config"] = (
-                            types.ThinkingConfig(thinking_budget=0)
+                        config_kwargs["thinking_config"] = types.ThinkingConfig(
+                            thinking_budget=0
                         )
                     res = self.genai_client.models.generate_content(
                         model=model,
