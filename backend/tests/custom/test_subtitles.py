@@ -923,6 +923,11 @@ async def test_save_job_to_gallery():
             "_upload_artifact_to_gcs",
             return_value="gs://bucket/subtitles_outputs/sub_gal_1/output.mp4",
         ),
+        patch.object(
+            service,
+            "create_job_zip_package",
+            return_value="/tmp/package.zip",
+        ),
         patch("os.path.exists", return_value=True),
     ):
         (

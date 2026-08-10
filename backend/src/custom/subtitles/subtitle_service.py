@@ -1314,7 +1314,13 @@ class SubtitleService:
 
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for local_file, arcname in artifacts_to_add:
-                zf.write(local_file, arcname=arcname)
+                try:
+                    if os.path.exists(local_file) and os.path.isfile(
+                        local_file
+                    ):
+                        zf.write(local_file, arcname=arcname)
+                except Exception as e:
+                    logger.debug(f"Could not add {local_file} to zip: {e}")
 
         return zip_path
 
