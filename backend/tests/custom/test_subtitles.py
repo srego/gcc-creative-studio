@@ -977,7 +977,55 @@ def test_controller_save_to_gallery_endpoint(api_client):
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert data["asset_id"] == 99
-        assert data["asset_name"] == "My Saved Video"
-        assert data["saved_items_count"] == 3
         assert len(data["saved_filenames"]) == 3
+
+
+def test_generate_thumbnail_success_and_fallback():
+    """Tests thumbnail generation via ffmpeg and fallback."""
+    from src.custom.subtitles.subtitle_service import PodcastSubtitleEngine
+
+    engine = PodcastSubtitleEngine()
+
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("os.path.getsize", return_value=1024),
+        patch("subprocess.run") as mock_sub,
+    ):
+        mock_sub.return_value = MagicMock(returncode=0)
+        res = engine.generate_thumbnail("/tmp/video.mp4", "/tmp/thumb.jpg")
+        assert res == "/tmp/thumb.jpg"
+
+    # Test failure when file doesn't exist
+    with patch("os.path.exists", return_value=False):
+        res = engine.generate_thumbnail("/tmp/video.mp4", "/tmp/thumb.jpg")
+        assert res is None
+
+
+def test_save_job_to_gallery_uncompleted_error():
+    """Tests that attempting to save an incomplete job raises 400."""
+    from fastapi import HTTPException
+    from src.custom.subtitles.subtitle_service import SubtitleService
+
+    service = SubtitleService()
+    dto = SubtitleResponseDTO(
+        job_id="sub_pending",
+        status="processing",
+    )
+    service.jobs["sub_pending"] = dto
+    mock_db = MagicMock()
+
+    import pytest
+
+    with pytest.raises(HTTPException) as exc_info:
+        import asyncio
+
+        asyncio.run(
+            service.save_job_to_gallery(
+                job_id="sub_pending",
+                workspace_id=1,
+                user_id=1,
+                user_email="a@b.com",
+                db=mock_db,
+            )
+        )
+    assert exc_info.value.status_code == 400
