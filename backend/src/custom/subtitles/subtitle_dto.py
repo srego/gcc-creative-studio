@@ -102,3 +102,30 @@ class SubtitleResponseDTO(BaseModel):
         default=0,
         description="Estimated completion percentage (0-100).",
     )
+
+
+class SubtitleUploadUrlRequestDTO(BaseModel):
+    """Request model for acquiring a GCS presigned upload URL."""
+
+    filename: str = Field(
+        description="Original name of the video file to be uploaded.",
+    )
+    content_type: str = Field(
+        default="video/mp4",
+        description="MIME content type of the video file.",
+    )
+    size: Optional[int] = Field(
+        default=None,
+        description="Approximate file size in bytes.",
+    )
+
+
+class SubtitleUploadUrlResponseDTO(BaseModel):
+    """Response model with the GCS presigned upload URL and target GCS URI."""
+
+    upload_url: str = Field(
+        description="V4 presigned PUT URL for direct client-side GCS upload.",
+    )
+    gcs_uri: str = Field(
+        description="Final Cloud Storage URI (gs://bucket/object) of the uploaded file.",
+    )

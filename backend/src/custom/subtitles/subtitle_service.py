@@ -15,6 +15,7 @@
 """Subtitle processing engine service wrapping GCP STT v2, Gemini, and FFmpeg."""
 
 import concurrent.futures
+import datetime
 import json
 import logging
 import os
@@ -24,6 +25,7 @@ import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
+from fastapi import HTTPException, status
 from google import genai
 from google.api_core.client_options import ClientOptions
 from google.cloud import speech_v2, storage
@@ -634,14 +636,38 @@ Word timing data:
         progress_callback: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """Runs complete subtitle extraction, refinement, and rendering pipeline."""
+        if not job_dir:
+            job_dir = (
+                os.path.dirname(video_path)
+                if not video_path.startswith("gs://")
+                else "/tmp/output_subtitles"
+            )
+        os.makedirs(job_dir, exist_ok=True)
+
+        if video_path.startswith("gs://"):
+            if progress_callback:
+                progress_callback("extracting", 10)
+            parts = video_path.replace("gs://", "").split("/", 1)
+            bucket_name = parts[0]
+            blob_name = parts[1] if len(parts) > 1 else "source_video.mp4"
+            local_video_name = (
+                re.sub(r"[^a-zA-Z0-9_\-\.]", "_", os.path.basename(blob_name))
+                or "source_video.mp4"
+            )
+            local_video_path = os.path.join(job_dir, local_video_name)
+            logger.info(
+                "Downloading source video from %s to %s",
+                video_path,
+                local_video_path,
+            )
+            blob = self.storage_client.bucket(bucket_name).blob(blob_name)
+            blob.download_to_filename(local_video_path)
+            video_path = local_video_path
+
         if not os.path.exists(video_path):
             raise FileNotFoundError(
                 f"Source video file not found: {video_path}"
             )
-
-        if not job_dir:
-            job_dir = os.path.dirname(video_path)
-        os.makedirs(job_dir, exist_ok=True)
 
         if progress_callback:
             progress_callback("extracting", 15)
@@ -812,12 +838,76 @@ class SubtitleService:
                     break
                 version += 1
 
-        os.makedirs(candidate_dir, exist_ok=True)
         try:
-            os.chmod(candidate_dir, 0o777)
+            os.makedirs(candidate_dir, exist_ok=True)
+            try:
+                os.chmod(candidate_dir, 0o777)
+            except Exception:
+                pass
         except Exception:
-            pass
+            # Fallback to /tmp in containerized/Cloud Run environments
+            base_dir = "/tmp/output_subtitles"
+            candidate_dir = os.path.join(base_dir, folder_name)
+            os.makedirs(candidate_dir, exist_ok=True)
+
         return candidate_dir
+
+    def generate_signed_upload_url(
+        self,
+        filename: str,
+        content_type: str = "video/mp4",
+        bucket_name: Optional[str] = None,
+    ) -> tuple[str, str]:
+        """Generates a secure GCS presigned upload URL for direct video uploads."""
+        bucket = (
+            bucket_name
+            or getattr(config_service, "GENMEDIA_BUCKET", None)
+            or os.getenv("GENMEDIA_BUCKET")
+            or "creative-studio-delta-cs-development-bucket"
+        )
+        file_uuid = uuid.uuid4().hex[:12]
+        safe_name = (
+            re.sub(r"[^a-zA-Z0-9_\-\.]", "_", os.path.basename(filename))
+            or "video.mp4"
+        )
+        destination_blob_name = f"subtitles_inputs/{file_uuid}/{safe_name}"
+        gcs_uri = f"gs://{bucket}/{destination_blob_name}"
+
+        try:
+            from src.auth.iam_signer_credentials_service import (  # pylint: disable=import-outside-toplevel
+                IamSignerCredentials,
+            )
+
+            signer = IamSignerCredentials()
+            signed_url, returned_gcs_uri = signer.generate_v4_upload_signed_url(
+                destination_blob_name=destination_blob_name,
+                content_type=content_type,
+                bucket_name=bucket,
+                expiration_hours=2,
+            )
+            if signed_url:
+                return signed_url, (returned_gcs_uri or gcs_uri)
+        except Exception as e:
+            logger.warning("IamSigner upload URL generation fallback: %s", e)
+
+        # Direct Client fallback
+        try:
+            blob = self.engine.storage_client.bucket(bucket).blob(
+                destination_blob_name
+            )
+            signed_url = blob.generate_signed_url(
+                version="v4",
+                expiration=datetime.timedelta(hours=2),
+                method="PUT",
+                content_type=content_type,
+            )
+            return signed_url, gcs_uri
+        except Exception as exc:
+            logger.error("Failed to generate direct GCS upload URL: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Could not generate Cloud Storage upload URL: {str(exc)}",
+            ) from exc
 
     def process_job(
         self,

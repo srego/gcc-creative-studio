@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-import {HttpClient} from '@angular/common/http';
+import {HttpClient, HttpHeaders} from '@angular/common/http';
 import {Injectable} from '@angular/core';
 import {Observable} from 'rxjs';
+import {catchError, switchMap} from 'rxjs/operators';
 import {environment} from '../../../environments/environment';
 
 export interface SubtitleResponse {
@@ -36,6 +37,11 @@ export interface SubtitleResponse {
   progress?: number;
 }
 
+export interface SubtitleUploadUrlResponse {
+  upload_url: string;
+  gcs_uri: string;
+}
+
 export interface SubtitleGenerationParams {
   file?: File | null;
   videoUrl?: string;
@@ -53,31 +59,79 @@ export class SubtitlesService {
 
   constructor(private http: HttpClient) {}
 
+  getUploadUrl(
+    filename: string,
+    contentType = 'video/mp4',
+    size?: number,
+  ): Observable<SubtitleUploadUrlResponse> {
+    return this.http.post<SubtitleUploadUrlResponse>(
+      `${this.baseUrl}/generate-upload-url`,
+      {
+        filename,
+        content_type: contentType,
+        size,
+      },
+    );
+  }
+
+  uploadToGcs(signedUrl: string, file: File): Observable<unknown> {
+    const headers = new HttpHeaders({'Content-Type': file.type || 'video/mp4'});
+    return this.http.put(signedUrl, file, {headers, observe: 'response'});
+  }
+
   generateSubtitles(
     params: SubtitleGenerationParams,
   ): Observable<SubtitleResponse> {
     if (params.file) {
-      const formData = new FormData();
-      formData.append('file', params.file, params.file.name);
-      if (params.packageName) {
-        formData.append('package_name', params.packageName);
-      }
-      if (params.languageCode) {
-        formData.append('language_code', params.languageCode);
-      }
-      if (params.outputFormat) {
-        formData.append('output_format', params.outputFormat);
-      }
-      formData.append('burn_subtitles', String(!!params.burnSubtitles));
+      const file = params.file;
+      return this.getUploadUrl(
+        file.name,
+        file.type || 'video/mp4',
+        file.size,
+      ).pipe(
+        switchMap(({upload_url, gcs_uri}) => {
+          return this.uploadToGcs(upload_url, file).pipe(
+            switchMap(() => {
+              return this.http.post<SubtitleResponse>(
+                `${this.baseUrl}/generate`,
+                {
+                  video_uri: gcs_uri,
+                  video_url: gcs_uri,
+                  package_name: params.packageName || '',
+                  language_code: params.languageCode || 'en-US',
+                  output_format: params.outputFormat || 'vtt',
+                  burn_subtitles: !!params.burnSubtitles,
+                },
+              );
+            }),
+          );
+        }),
+        catchError(err => {
+          console.warn('GCS direct upload fallback to multipart:', err);
+          const formData = new FormData();
+          formData.append('file', file, file.name);
+          if (params.packageName) {
+            formData.append('package_name', params.packageName);
+          }
+          if (params.languageCode) {
+            formData.append('language_code', params.languageCode);
+          }
+          if (params.outputFormat) {
+            formData.append('output_format', params.outputFormat);
+          }
+          formData.append('burn_subtitles', String(!!params.burnSubtitles));
 
-      return this.http.post<SubtitleResponse>(
-        `${this.baseUrl}/generate`,
-        formData,
+          return this.http.post<SubtitleResponse>(
+            `${this.baseUrl}/generate`,
+            formData,
+          );
+        }),
       );
     }
 
     return this.http.post<SubtitleResponse>(`${this.baseUrl}/generate`, {
       video_url: params.videoUrl || '',
+      video_uri: params.videoUrl || '',
       package_name: params.packageName || '',
       language_code: params.languageCode || 'en-US',
       output_format: params.outputFormat || 'vtt',

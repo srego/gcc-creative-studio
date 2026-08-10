@@ -148,8 +148,12 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     const current = this.previewVideoUrl();
     if (current && current.startsWith('blob:')) {
       try {
-        URL.revokeObjectURL(current);
-      } catch (_) {}
+        if (typeof window !== 'undefined' && window.URL) {
+          window.URL.revokeObjectURL(current);
+        }
+      } catch (err) {
+        console.debug('Failed to revoke object URL', err);
+      }
     }
   }
 
@@ -170,7 +174,11 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       const file = input.files[0];
       this.cleanupPreviewUrl();
       this.selectedFile.set(file);
-      this.previewVideoUrl.set(URL.createObjectURL(file));
+      this.previewVideoUrl.set(
+        typeof window !== 'undefined' && window.URL
+          ? window.URL.createObjectURL(file)
+          : '',
+      );
       this.selectedGalleryAsset.set(null);
       this.videoUrl.set('');
       input.value = '';
@@ -190,25 +198,23 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       panelClass: 'image-selector-dialog',
     });
 
-    dialogRef.afterClosed().subscribe((result: any) => {
+    dialogRef.afterClosed().subscribe((result: Record<string, any> | null) => {
       if (result) {
         let title = 'Selected Gallery Asset';
         let url = '';
         if ('original_filename' in result) {
-          title = result.original_filename;
-          url = result.gcs_uri || '';
-        } else if ('mediaItem' in result) {
-          title =
-            result.mediaItem.title ||
-            result.mediaItem.filename ||
-            'Gallery Video';
-          url = result.mediaItem.gcs_uri || result.mediaItem.url || '';
-        } else if (typeof result === 'object' && result.title) {
-          title = result.title;
-          url = result.url || result.gcs_uri || '';
+          title = String(result['original_filename']);
+          url = String(result['gcs_uri'] || '');
+        } else if ('mediaItem' in result && result['mediaItem']) {
+          const item = result['mediaItem'];
+          title = item.title || item.filename || 'Gallery Video';
+          url = item.gcs_uri || item.url || '';
+        } else if (typeof result === 'object' && result['title']) {
+          title = String(result['title']);
+          url = String(result['url'] || result['gcs_uri'] || '');
         }
         this.selectGalleryAsset({
-          id: result.id || 'gallery-selected',
+          id: String(result['id'] || 'gallery-selected'),
           title: title || 'Media Gallery Video',
           url:
             url ||
@@ -255,7 +261,11 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       const file = event.dataTransfer.files[0];
       this.cleanupPreviewUrl();
       this.selectedFile.set(file);
-      this.previewVideoUrl.set(URL.createObjectURL(file));
+      this.previewVideoUrl.set(
+        typeof window !== 'undefined' && window.URL
+          ? window.URL.createObjectURL(file)
+          : '',
+      );
       this.selectedGalleryAsset.set(null);
       this.videoUrl.set('');
     }
@@ -351,12 +361,14 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
           this.progressPercentage.set(initRes.progress || 15);
           this.startPollingStatus(initRes.job_id);
         },
-        error: (err: any) => {
-          this.handleJobFailure(
-            err?.error?.detail ||
-              err?.message ||
-              'Failed to submit subtitle job.',
-          );
+        error: (err: HttpErrorResponse | Error | unknown) => {
+          const detail =
+            err && typeof err === 'object' && 'error' in err
+              ? (err as {error?: {detail?: string}}).error?.detail
+              : err instanceof Error
+                ? err.message
+                : 'Failed to submit subtitle job.';
+          this.handleJobFailure(detail || 'Failed to submit subtitle job.');
         },
       });
   }
@@ -401,12 +413,16 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
             }
           }
         },
-        error: (err: any) => {
+        error: (err: HttpErrorResponse | Error | unknown) => {
           this.stopPolling();
+          const detail =
+            err && typeof err === 'object' && 'error' in err
+              ? (err as {error?: {detail?: string}}).error?.detail
+              : err instanceof Error
+                ? err.message
+                : 'Lost connection to subtitle tracking service.';
           this.handleJobFailure(
-            err?.error?.detail ||
-              err?.message ||
-              'Lost connection to subtitle tracking service.',
+            detail || 'Lost connection to subtitle tracking service.',
           );
         },
       });

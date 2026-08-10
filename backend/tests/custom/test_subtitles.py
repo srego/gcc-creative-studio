@@ -659,3 +659,98 @@ def test_transcribe_chirp3_error_raised():
             audio_path_or_gcs_uri="gs://bucket/test.wav",
             language_code="en-US",
         )
+
+
+def test_generate_signed_upload_url():
+    """Tests that SubtitleService generates signed upload URLs."""
+    service = SubtitleService()
+    with patch(
+        "src.auth.iam_signer_credentials_service.IamSignerCredentials.generate_v4_upload_signed_url"
+    ) as mock_signer:
+        mock_signer.return_value = (
+            "https://storage.googleapis.com/upload-signed-url",
+            "gs://test-bucket/subtitles_inputs/123/video.mp4",
+        )
+        url, uri = service.generate_signed_upload_url(
+            filename="podcast_clip.mp4",
+            content_type="video/mp4",
+            bucket_name="test-bucket",
+        )
+        assert url == "https://storage.googleapis.com/upload-signed-url"
+        assert uri == "gs://test-bucket/subtitles_inputs/123/video.mp4"
+
+
+def test_generate_signed_upload_url_fallback():
+    """Tests fallback to direct storage client when IamSigner is unavailable."""
+    service = SubtitleService()
+    mock_blob = MagicMock()
+    mock_blob.generate_signed_url.return_value = "https://signed.url/direct"
+    service.engine.storage_client = MagicMock()
+    service.engine.storage_client.bucket.return_value.blob.return_value = (
+        mock_blob
+    )
+
+    with patch(
+        "src.auth.iam_signer_credentials_service.IamSignerCredentials.generate_v4_upload_signed_url",
+        side_effect=Exception("IamSigner not configured"),
+    ):
+        url, uri = service.generate_signed_upload_url(
+            filename="clip.mp4",
+            content_type="video/mp4",
+            bucket_name="test-bucket",
+        )
+        assert url == "https://signed.url/direct"
+        assert uri.startswith("gs://test-bucket/subtitles_inputs/")
+
+
+def test_process_video_gcs_uri_download(tmp_path):
+    """Tests that process_video downloads GCS video files to job directory before processing."""
+    engine = PodcastSubtitleEngine()
+    engine.storage_client = MagicMock()
+    mock_blob = MagicMock()
+    engine.storage_client.bucket.return_value.blob.return_value = mock_blob
+
+    def mock_download(dest):
+        with open(dest, "wb") as f:
+            f.write(b"mock video data")
+
+    mock_blob.download_to_filename.side_effect = mock_download
+
+    with (
+        patch.object(
+            engine, "transcribe_chirp3", return_value={"segments": []}
+        ),
+        patch.object(engine, "refine_gemini36", return_value=[]),
+        patch.object(engine, "export_vtt_srt"),
+        patch.object(engine, "embed_soft_subtitles_ffmpeg"),
+        patch.object(engine, "burn_subtitles_ffmpeg"),
+    ):
+        res = engine.process_video(
+            video_path="gs://my-bucket/inputs/video.mp4",
+            job_dir=str(tmp_path),
+            generate_burned_in=True,
+        )
+        assert "subtitles_vtt" in res
+        mock_blob.download_to_filename.assert_called_once()
+
+
+def test_controller_generate_upload_url_endpoint(api_client):
+    """Tests the POST /generate-upload-url controller endpoint."""
+    from src.custom.subtitles.subtitle_service import subtitle_service
+
+    with patch.object(
+        subtitle_service,
+        "generate_signed_upload_url",
+        return_value=(
+            "https://signed.upload.url",
+            "gs://my-bucket/subtitles/video.mp4",
+        ),
+    ):
+        response = api_client.post(
+            "/api/v1/custom/subtitles/generate-upload-url",
+            json={"filename": "test.mp4", "content_type": "video/mp4"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["upload_url"] == "https://signed.upload.url"
+        assert data["gcs_uri"] == "gs://my-bucket/subtitles/video.mp4"

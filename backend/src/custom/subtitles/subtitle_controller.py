@@ -33,6 +33,8 @@ from src.auth.auth_guard import RoleChecker
 from src.custom.subtitles.subtitle_dto import (
     SubtitleRequestDTO,
     SubtitleResponseDTO,
+    SubtitleUploadUrlRequestDTO,
+    SubtitleUploadUrlResponseDTO,
 )
 from src.custom.subtitles.subtitle_service import subtitle_service
 from src.users.user_model import UserRoleEnum
@@ -46,6 +48,35 @@ router = APIRouter(
         )
     ],
 )
+
+
+@router.post(
+    "/generate-upload-url",
+    response_model=SubtitleUploadUrlResponseDTO,
+    status_code=status.HTTP_200_OK,
+    summary="Get Signed URL for Direct Video Upload",
+)
+async def generate_upload_url(
+    request_dto: SubtitleUploadUrlRequestDTO,
+) -> SubtitleUploadUrlResponseDTO:
+    """Generates a secure GCS v4 presigned URL to upload video files directly to Cloud Storage."""
+    try:
+        signed_url, gcs_uri = subtitle_service.generate_signed_upload_url(
+            filename=request_dto.filename,
+            content_type=request_dto.content_type,
+        )
+        return SubtitleUploadUrlResponseDTO(
+            upload_url=signed_url,
+            gcs_uri=gcs_uri,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to generate upload URL: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not generate upload URL: {str(exc)}",
+        ) from exc
 
 
 @router.post(
