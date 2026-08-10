@@ -768,6 +768,93 @@ class SubtitleService:
         self.engine = PodcastSubtitleEngine()
         self.jobs: Dict[str, SubtitleResponseDTO] = {}
 
+    def _save_job_state(
+        self, job_id: str, job_dto: SubtitleResponseDTO
+    ) -> None:
+        """Persists job state to memory cache, local /tmp, and Google Cloud Storage."""
+        self.jobs[job_id] = job_dto
+
+        # 1. Local disk cache
+        try:
+            local_jobs_dir = "/tmp/subtitles_jobs"
+            os.makedirs(local_jobs_dir, exist_ok=True)
+            local_file = os.path.join(local_jobs_dir, f"{job_id}.json")
+            with open(local_file, "w", encoding="utf-8") as f:
+                f.write(job_dto.model_dump_json())
+        except Exception as e:
+            logger.debug(f"Local job cache write failed: {e}")
+
+        # 2. Google Cloud Storage persistence
+        try:
+            if self.engine.storage_client:
+                bucket_name = (
+                    getattr(config_service, "GENMEDIA_BUCKET", None)
+                    or os.getenv("GENMEDIA_BUCKET")
+                    or "creative-studio-delta-cs-development-bucket"
+                )
+                bucket = self.engine.storage_client.bucket(bucket_name)
+                blob = bucket.blob(f"subtitles_jobs/{job_id}.json")
+                blob.upload_from_string(
+                    job_dto.model_dump_json(),
+                    content_type="application/json",
+                )
+        except Exception as e:
+            logger.debug(f"GCS job state write skipped/failed: {e}")
+
+    def _read_job_from_gcs(self, job_id: str) -> Optional[SubtitleResponseDTO]:
+        """Reads job state JSON directly from Cloud Storage."""
+        try:
+            if not self.engine.storage_client:
+                return None
+            bucket_name = (
+                getattr(config_service, "GENMEDIA_BUCKET", None)
+                or os.getenv("GENMEDIA_BUCKET")
+                or "creative-studio-delta-cs-development-bucket"
+            )
+            bucket = self.engine.storage_client.bucket(bucket_name)
+            blob = bucket.blob(f"subtitles_jobs/{job_id}.json")
+            if blob.exists():
+                content = blob.download_as_text()
+                data = json.loads(content)
+                return SubtitleResponseDTO(**data)
+        except Exception as e:
+            logger.debug(f"GCS job state read skipped/failed: {e}")
+        return None
+
+    def _load_job_state(self, job_id: str) -> Optional[SubtitleResponseDTO]:
+        """Loads job state from memory, local disk, or GCS across Cloud Run instances."""
+        # Check memory first
+        if job_id in self.jobs:
+            job = self.jobs[job_id]
+            if job.status in ("completed", "failed"):
+                return job
+            # If still pending/processing, check if GCS has a completed/newer version
+            gcs_job = self._read_job_from_gcs(job_id)
+            if gcs_job:
+                self.jobs[job_id] = gcs_job
+                return gcs_job
+            return job
+
+        # Check local disk
+        try:
+            local_file = os.path.join("/tmp/subtitles_jobs", f"{job_id}.json")
+            if os.path.exists(local_file):
+                with open(local_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    dto = SubtitleResponseDTO(**data)
+                    self.jobs[job_id] = dto
+                    return dto
+        except Exception as e:
+            logger.debug(f"Local job cache read failed: {e}")
+
+        # Check Cloud Storage
+        gcs_job = self._read_job_from_gcs(job_id)
+        if gcs_job:
+            self.jobs[job_id] = gcs_job
+            return gcs_job
+
+        return None
+
     def create_job(self) -> str:
         """Create a new tracked subtitle job."""
         if len(self.jobs) >= 100:
@@ -775,17 +862,18 @@ class SubtitleService:
             del self.jobs[oldest_job]
 
         job_id = f"sub_{uuid.uuid4().hex[:12]}"
-        self.jobs[job_id] = SubtitleResponseDTO(
+        dto = SubtitleResponseDTO(
             job_id=job_id,
             status="pending",
             step="idle",
             progress=0,
         )
+        self._save_job_state(job_id, dto)
         return job_id
 
     def get_job_status(self, job_id: str) -> Optional[SubtitleResponseDTO]:
         """Retrieve job status DTO."""
-        return self.jobs.get(job_id)
+        return self._load_job_state(job_id)
 
     def resolve_output_dir(
         self, package_name: Optional[str] = None, job_id: str = ""
@@ -799,7 +887,6 @@ class SubtitleService:
         elif os.path.exists("/app"):
             base_dir = "/app/output_subtitles"
         else:
-            # Locate repo root by walking up from current module file
             curr = os.path.abspath(__file__)
             for _ in range(5):
                 curr = os.path.dirname(curr)
@@ -824,7 +911,6 @@ class SubtitleService:
             os.path.isfile(os.path.join(candidate_dir, f))
             for f in os.listdir(candidate_dir)
         ):
-            # Auto-version to prevent overwriting existing podcast deliverable packages
             version = 2
             while True:
                 versioned_dir = os.path.join(
@@ -845,7 +931,6 @@ class SubtitleService:
             except Exception:
                 pass
         except Exception:
-            # Fallback to /tmp in containerized/Cloud Run environments
             base_dir = "/tmp/output_subtitles"
             candidate_dir = os.path.join(base_dir, folder_name)
             os.makedirs(candidate_dir, exist_ok=True)
@@ -909,6 +994,93 @@ class SubtitleService:
                 detail=f"Could not generate Cloud Storage upload URL: {str(exc)}",
             ) from exc
 
+    def _upload_artifact_to_gcs(
+        self, job_id: str, local_path: Optional[str]
+    ) -> Optional[str]:
+        """Uploads a generated output file to Cloud Storage for persistent multi-instance availability."""
+        if not local_path or not os.path.exists(local_path):
+            return None
+        try:
+            if not self.engine.storage_client:
+                return None
+            bucket_name = (
+                getattr(config_service, "GENMEDIA_BUCKET", None)
+                or os.getenv("GENMEDIA_BUCKET")
+                or "creative-studio-delta-cs-development-bucket"
+            )
+            bucket = self.engine.storage_client.bucket(bucket_name)
+            filename = os.path.basename(local_path)
+            blob_name = f"subtitles_outputs/{job_id}/{filename}"
+            blob = bucket.blob(blob_name)
+            blob.upload_from_filename(local_path)
+            return f"gs://{bucket_name}/{blob_name}"
+        except Exception as e:
+            logger.debug(f"Failed to upload artifact {local_path} to GCS: {e}")
+            return None
+
+    def get_artifact_file(self, job_id: str, file_type: str) -> Optional[str]:
+        """Resolves local path for an artifact, downloading from GCS if on another instance."""
+        status_dto = self.get_job_status(job_id)
+        if not status_dto:
+            return None
+
+        file_path = None
+        if file_type == "vtt":
+            file_path = status_dto.subtitles_vtt
+        elif file_type == "srt":
+            file_path = status_dto.subtitles_srt
+        elif file_type == "toggleable_video":
+            file_path = status_dto.default_toggleable_video
+        elif file_type == "burned_in_video":
+            file_path = status_dto.burned_in_video
+
+        if file_path and os.path.exists(file_path):
+            return file_path
+
+        # Attempt to retrieve from GCS
+        try:
+            if not self.engine.storage_client:
+                return None
+            bucket_name = (
+                getattr(config_service, "GENMEDIA_BUCKET", None)
+                or os.getenv("GENMEDIA_BUCKET")
+                or "creative-studio-delta-cs-development-bucket"
+            )
+            bucket = self.engine.storage_client.bucket(bucket_name)
+            blobs = list(
+                bucket.list_blobs(prefix=f"subtitles_outputs/{job_id}/")
+            )
+            for blob in blobs:
+                filename = os.path.basename(blob.name)
+                matched = False
+                if file_type == "vtt" and filename.endswith(".vtt"):
+                    matched = True
+                elif file_type == "srt" and filename.endswith(".srt"):
+                    matched = True
+                elif (
+                    file_type == "burned_in_video"
+                    and "burned_in" in filename
+                    and filename.endswith(".mp4")
+                ):
+                    matched = True
+                elif (
+                    file_type == "toggleable_video"
+                    and "toggleable" in filename
+                    and filename.endswith(".mp4")
+                ):
+                    matched = True
+
+                if matched:
+                    dest_dir = f"/tmp/subtitles_outputs/{job_id}"
+                    os.makedirs(dest_dir, exist_ok=True)
+                    dest_path = os.path.join(dest_dir, filename)
+                    blob.download_to_filename(dest_path)
+                    return dest_path
+        except Exception as e:
+            logger.warning(f"Failed to retrieve artifact from GCS: {e}")
+
+        return None
+
     def process_job(
         self,
         job_id: str,
@@ -920,15 +1092,16 @@ class SubtitleService:
         job_dir: Optional[str] = None,
     ) -> SubtitleResponseDTO:
         """Process a subtitle job and update tracking state."""
-        if job_id not in self.jobs:
-            self.jobs[job_id] = SubtitleResponseDTO(
+        job = self._load_job_state(job_id)
+        if not job:
+            job = SubtitleResponseDTO(
                 job_id=job_id, status="pending", step="idle", progress=0
             )
 
-        job = self.jobs[job_id]
         job.status = "processing"
         job.step = "extracting"
         job.progress = 10
+        self._save_job_state(job_id, job)
 
         if not job_dir:
             job_dir = self.resolve_output_dir(
@@ -938,6 +1111,7 @@ class SubtitleService:
         def update_progress(step: str, prog: int) -> None:
             job.step = step
             job.progress = prog
+            self._save_job_state(job_id, job)
 
         try:
             result = self.engine.process_video(
@@ -970,12 +1144,20 @@ class SubtitleService:
                 if burn_subtitles
                 else result.get("default_toggleable_video")
             )
+
+            # Persist output files to GCS for multi-instance download access
+            self._upload_artifact_to_gcs(job_id, job.subtitles_vtt)
+            self._upload_artifact_to_gcs(job_id, job.subtitles_srt)
+            self._upload_artifact_to_gcs(job_id, job.default_toggleable_video)
+            self._upload_artifact_to_gcs(job_id, job.burned_in_video)
+
         except Exception as e:
             logger.error(f"Subtitle job {job_id} failed: {e}", exc_info=True)
             job.status = "failed"
             job.step = "failed"
             job.error_message = str(e)
 
+        self._save_job_state(job_id, job)
         return job
 
 

@@ -754,3 +754,121 @@ def test_controller_generate_upload_url_endpoint(api_client):
         data = response.json()
         assert data["upload_url"] == "https://signed.upload.url"
         assert data["gcs_uri"] == "gs://my-bucket/subtitles/video.mp4"
+
+
+def test_job_state_gcs_persistence():
+    """Tests saving and reading job state to/from GCS."""
+    service = SubtitleService()
+    service.engine.storage_client = MagicMock()
+    mock_blob = MagicMock()
+    service.engine.storage_client.bucket.return_value.blob.return_value = (
+        mock_blob
+    )
+    mock_blob.exists.return_value = True
+    mock_blob.download_as_text.return_value = (
+        '{"job_id": "sub_gcs_1", "status": "completed", "progress": 100}'
+    )
+
+    dto = SubtitleResponseDTO(
+        job_id="sub_gcs_1", status="completed", progress=100
+    )
+    service._save_job_state("sub_gcs_1", dto)
+    mock_blob.upload_from_string.assert_called_once()
+
+    # Clear memory to force GCS read
+    service.jobs.clear()
+    loaded = service.get_job_status("sub_gcs_1")
+    assert loaded is not None
+    assert loaded.job_id == "sub_gcs_1"
+    assert loaded.status == "completed"
+
+
+def test_job_state_local_disk_load(tmp_path, monkeypatch):
+    """Tests reading job state from local disk when not in memory."""
+    service = SubtitleService()
+    service.engine.storage_client = None
+    service.jobs.clear()
+
+    local_dir = tmp_path / "subtitles_jobs"
+    local_dir.mkdir(parents=True, exist_ok=True)
+    job_file = local_dir / "sub_local_1.json"
+    job_file.write_text(
+        '{"job_id": "sub_local_1", "status": "completed", "progress": 100}'
+    )
+
+    with (
+        patch(
+            "os.path.exists",
+            side_effect=lambda p: (
+                True
+                if str(p) == str(job_file)
+                or "/tmp/subtitles_jobs/sub_local_1.json" in str(p)
+                else os.path.exists(p)
+            ),
+        ),
+        patch(
+            "builtins.open",
+            patch(
+                "builtins.open",
+                return_value=open(job_file, "r", encoding="utf-8"),
+            ),
+        ),
+    ):
+        dto = SubtitleResponseDTO(job_id="sub_local_1", status="completed")
+        service._save_job_state("sub_local_1", dto)
+        assert service.get_job_status("sub_local_1") is not None
+
+
+def test_upload_artifact_and_get_artifact(tmp_path):
+    """Tests artifact upload and download resolution from GCS."""
+    service = SubtitleService()
+    service.engine.storage_client = MagicMock()
+    mock_blob = MagicMock()
+    mock_blob.name = "subtitles_outputs/sub_art_1/test_output.vtt"
+    service.engine.storage_client.bucket.return_value.blob.return_value = (
+        mock_blob
+    )
+    service.engine.storage_client.bucket.return_value.list_blobs.return_value = [
+        mock_blob
+    ]
+
+    dummy_file = tmp_path / "test.vtt"
+    dummy_file.write_text("WEBVTT\n")
+
+    uri = service._upload_artifact_to_gcs("sub_art_1", str(dummy_file))
+    assert uri is not None
+    assert "subtitles_outputs/sub_art_1" in uri
+
+    # Test downloading artifact on another instance
+    dto = SubtitleResponseDTO(
+        job_id="sub_art_1",
+        status="completed",
+        subtitles_vtt="/non/existent/path.vtt",
+    )
+    service.jobs["sub_art_1"] = dto
+
+    with patch.object(mock_blob, "download_to_filename") as mock_dl:
+
+        def fake_download(dest):
+            with open(dest, "w") as f:
+                f.write("WEBVTT")
+
+        mock_dl.side_effect = fake_download
+        res = service.get_artifact_file("sub_art_1", "vtt")
+        assert res is not None
+        assert res.endswith("test_output.vtt")
+
+        # Test non-existent job
+        assert service.get_artifact_file("nonexistent_job", "vtt") is None
+
+        # Test other file types
+        mock_blob_srt = MagicMock()
+        mock_blob_srt.name = "subtitles_outputs/sub_art_1/test_output.srt"
+        service.engine.storage_client.bucket.return_value.list_blobs.return_value = [
+            mock_blob_srt
+        ]
+        res_srt = service.get_artifact_file("sub_art_1", "srt")
+        assert res_srt is not None
+
+        # Test none returned on upload if path does not exist
+        assert service._upload_artifact_to_gcs("sub_art_1", "/bad/path") is None

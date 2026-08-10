@@ -287,10 +287,14 @@ def download_output_file(
         media_type = "video/mp4"
 
     if not file_path or not os.path.exists(file_path):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Requested file type '{file_type}' is not available for job {job_id}.",
-        )
+        resolved_file = subtitle_service.get_artifact_file(job_id, file_type)
+        if resolved_file and os.path.exists(resolved_file):
+            file_path = resolved_file
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Requested file type '{file_type}' is not available for job {job_id}.",
+            )
 
     filename = os.path.basename(file_path)
     return FileResponse(

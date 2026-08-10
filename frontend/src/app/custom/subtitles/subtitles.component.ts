@@ -396,7 +396,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
           this.subtitlesService.getJobStatus(jobId).pipe(
             catchError(err => {
               consecutiveErrors++;
-              if (consecutiveErrors >= 6 || err?.status === 404) {
+              if (consecutiveErrors >= 8) {
                 return throwError(() => err);
               }
               return of(null);
