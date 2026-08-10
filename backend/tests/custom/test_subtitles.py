@@ -642,7 +642,7 @@ def test_subtitle_service_job_eviction():
 
 
 def test_transcribe_chirp3_error_raised():
-    """Tests that Speech-to-Text v2 error response raises RuntimeError."""
+    """Tests that Speech-to-Text v2 error response falls back to Gemini Multimodal."""
     engine = PodcastSubtitleEngine()
     engine.speech_client = MagicMock()
     mock_op = MagicMock()
@@ -654,11 +654,17 @@ def test_transcribe_chirp3_error_raised():
     mock_op.result.return_value = mock_res
     engine.speech_client.batch_recognize.return_value = mock_op
 
-    with pytest.raises(RuntimeError, match="Speech-to-Text v2 error"):
-        engine.transcribe_chirp3(
+    with patch.object(
+        engine,
+        "transcribe_multimodal_gemini",
+        return_value={"full_text": "Fallback text", "words": []},
+    ) as mock_gemini:
+        res = engine.transcribe_chirp3(
             audio_path_or_gcs_uri="gs://bucket/test.wav",
             language_code="en-US",
         )
+        assert res["full_text"] == "Fallback text"
+        mock_gemini.assert_called_once()
 
 
 def test_generate_signed_upload_url():
