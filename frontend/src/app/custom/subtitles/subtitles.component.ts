@@ -179,29 +179,30 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     this.isProcessing.set(true);
     this.processingStep.set('uploading');
     this.subtitlesService.getJobStatus(jobId).subscribe({
-      next: res => {
-        this.isProcessing.set(false);
+      next: (res: SubtitleResponse) => {
         this.activeJobId.set(res.job_id);
-        this.progressPercentage.set(res.progress || 100);
-        this.processingStep.set(res.status as SubtitleStep);
         if (res.status === 'completed') {
-          if (res.segments) {
-            this.segmentsList.set(res.segments);
-          }
-          if (res.title) {
-            this.packageName.set(res.title);
-          }
           if (res.burned_in_video) {
             this.enableBurnedInVideo.set(true);
           }
+          this.handleJobCompletion(res);
+        } else if (res.status === 'failed') {
+          this.handleJobFailure(
+            res.error_message || 'Subtitle generation failed.',
+          );
+        } else {
+          this.isProcessing.set(true);
+          this.startPolling(res.job_id);
         }
       },
-      error: err => {
-        this.isProcessing.set(false);
-        this.processingStep.set('failed');
-        this.errorMessage.set(
-          `Could not load subtitle job ${jobId}: ${err?.message || 'Not found'}`,
-        );
+      error: (err: HttpErrorResponse | Error | unknown) => {
+        const detail =
+          err && typeof err === 'object' && 'error' in err
+            ? (err as {error?: {detail?: string}}).error?.detail
+            : err instanceof Error
+              ? err.message
+              : 'Subtitle job not found.';
+        this.handleJobFailure(detail || 'Subtitle job not found.');
       },
     });
   }
