@@ -924,7 +924,13 @@ async def test_save_job_to_gallery():
         ),
         patch("os.path.exists", return_value=True),
     ):
-        asset = await service.save_job_to_gallery(
+        (
+            primary_id,
+            pkg_name,
+            gcs_uri,
+            saved_count,
+            saved_files,
+        ) = await service.save_job_to_gallery(
             job_id="sub_gal_1",
             workspace_id=1,
             user_id=42,
@@ -932,26 +938,25 @@ async def test_save_job_to_gallery():
             db=mock_db,
             title="Podcast Subtitled",
         )
-        assert asset is not None
-        assert asset.original_filename == "Podcast Subtitled.mp4"
-        assert asset.workspace_id == 1
-        assert asset.user_id == 42
+        assert pkg_name == "Podcast Subtitled"
+        assert saved_count >= 1
+        assert len(saved_files) >= 1
 
 
 def test_controller_save_to_gallery_endpoint(api_client):
     """Tests the POST /save-to-gallery controller endpoint."""
     from src.custom.subtitles.subtitle_service import subtitle_service
-    from src.source_assets.schema.source_asset_model import SourceAsset
-
-    mock_asset = MagicMock(spec=SourceAsset)
-    mock_asset.id = 99
-    mock_asset.original_filename = "My Saved Video.mp4"
-    mock_asset.gcs_uri = "gs://bucket/video.mp4"
 
     with patch.object(
         subtitle_service,
         "save_job_to_gallery",
-        return_value=mock_asset,
+        return_value=(
+            99,
+            "My Saved Video",
+            "gs://bucket/subtitles_packages/My_Saved_Video/",
+            3,
+            ["subtitles.vtt", "subtitles.srt", "output_burned.mp4"],
+        ),
     ):
         response = api_client.post(
             "/api/v1/custom/subtitles/save-to-gallery",
@@ -965,4 +970,6 @@ def test_controller_save_to_gallery_endpoint(api_client):
         data = response.json()
         assert data["success"] is True
         assert data["asset_id"] == 99
-        assert data["asset_name"] == "My Saved Video.mp4"
+        assert data["asset_name"] == "My Saved Video"
+        assert data["saved_items_count"] == 3
+        assert len(data["saved_filenames"]) == 3

@@ -82,12 +82,18 @@ class PodcastSubtitleEngine:
             self.speech_client = None
 
         try:
-            self.storage_client = storage.Client(
-                project=self.project_id, credentials=credentials
-            )
-        except Exception as e:
-            logger.warning(f"Failed to initialize Storage client: {e}")
-            self.storage_client = None
+            if credentials:
+                self.storage_client = storage.Client(
+                    project=self.project_id, credentials=credentials
+                )
+            else:
+                self.storage_client = storage.Client(project=self.project_id)
+        except Exception:
+            try:
+                self.storage_client = storage.Client(project=self.project_id)
+            except Exception as e:
+                logger.warning(f"Failed to initialize Storage client: {e}")
+                self.storage_client = None
 
         try:
             self.genai_client = genai.Client(
@@ -101,27 +107,15 @@ class PodcastSubtitleEngine:
                 self.genai_client = None
 
     def _get_credentials(self) -> Any:
-        """Fetch valid Application Default Credentials with gcloud fallback."""
+        """Fetch valid Application Default Credentials."""
         try:
             import google.auth
 
             creds, _ = google.auth.default()
             return creds
-        except Exception:
-            try:
-                res = subprocess.run(
-                    ["gcloud", "auth", "print-access-token"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                token = res.stdout.strip()
-                from google.oauth2.credentials import Credentials
-
-                return Credentials(token)
-            except Exception as e:
-                logger.warning(f"Could not fetch credentials: {e}")
-                return None
+        except Exception as e:
+            logger.debug(f"Could not load application default credentials: {e}")
+            return None
 
     def download_youtube_audio(self, youtube_url: str, target_dir: str) -> str:
         """Downloads audio track from YouTube URL using yt-dlp."""
@@ -1172,27 +1166,74 @@ class SubtitleService:
     def create_job_zip_package(self, job_id: str) -> Optional[str]:
         """Bundles all generated artifacts for a job into a downloadable zip file."""
         job = self.get_job_status(job_id)
-        if not job or job.status != "completed":
+        if not job:
             return None
 
         zip_dir = os.path.join("/tmp", "subtitles_zip", job_id)
         os.makedirs(zip_dir, exist_ok=True)
-        zip_path = os.path.join(zip_dir, f"subtitle_package_{job_id}.zip")
+        zip_path = os.path.join(zip_dir, f"subtitles_{job_id[:8]}_package.zip")
 
         artifacts_to_add: List[tuple[str, str]] = []
-        for file_type, arcname_suffix in [
-            ("vtt", ".vtt"),
-            ("srt", ".srt"),
-            ("burned_in_video", "_burned.mp4"),
-            ("toggleable_video", "_subtitled.mp4"),
+
+        # 1. Collect VTT and SRT
+        for file_type, arcname in [
+            ("vtt", "subtitles.vtt"),
+            ("srt", "subtitles.srt"),
         ]:
             local_path = self.get_artifact_file(job_id, file_type)
             if local_path and os.path.exists(local_path):
-                arcname = f"subtitles_{job_id[:8]}{arcname_suffix}"
                 artifacts_to_add.append((local_path, arcname))
 
+        # 2. Collect Burned-In Video if present
+        if job.burned_in_video:
+            local_path = self.get_artifact_file(job_id, "burned_in_video")
+            if local_path and os.path.exists(local_path):
+                artifacts_to_add.append((local_path, "subtitled_burned.mp4"))
+
+        # 3. Collect Toggleable Video if present
+        if job.default_toggleable_video:
+            local_path = self.get_artifact_file(job_id, "toggleable_video")
+            if local_path and os.path.exists(local_path):
+                artifacts_to_add.append((local_path, "subtitled_toggleable.mp4"))
+
+        # 4. Collect Transcript JSON if present
+        local_transcript = os.path.join(
+            f"/tmp/subtitles_outputs/{job_id}", "transcript.json"
+        )
+        if os.path.exists(local_transcript):
+            artifacts_to_add.append((local_transcript, "transcript.json"))
+
+        # 5. Direct GCS fallback if empty
+        if not artifacts_to_add and self.engine.storage_client:
+            try:
+                bucket = self.engine.storage_client.bucket(
+                    self.engine.gcs_bucket_name
+                )
+                blobs = list(
+                    bucket.list_blobs(prefix=f"subtitles_outputs/{job_id}/")
+                )
+                dest_dir = f"/tmp/subtitles_outputs/{job_id}"
+                os.makedirs(dest_dir, exist_ok=True)
+                for blob in blobs:
+                    fname = os.path.basename(blob.name)
+                    if fname and not fname.startswith("."):
+                        dest_f = os.path.join(dest_dir, fname)
+                        if not os.path.exists(dest_f):
+                            blob.download_to_filename(dest_f)
+                        artifacts_to_add.append((dest_f, fname))
+            except Exception as e:
+                logger.warning(
+                    f"Error reading GCS bucket for zip packaging: {e}"
+                )
+
         if not artifacts_to_add:
-            return None
+            # Create a manifest info file so zip is always valid
+            info_file = os.path.join(zip_dir, "job_manifest.txt")
+            with open(info_file, "w", encoding="utf-8") as f:
+                f.write(
+                    f"Subtitle Job ID: {job_id}\nStatus: {job.status}\nSegments: {job.segment_count}\n"
+                )
+            artifacts_to_add.append((info_file, "job_manifest.txt"))
 
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for local_file, arcname in artifacts_to_add:
@@ -1208,8 +1249,11 @@ class SubtitleService:
         user_email: str,
         db: AsyncSession,
         title: Optional[str] = None,
-    ) -> SourceAsset:
-        """Persists the generated video from a subtitle job as a SourceAsset in the Media Gallery."""
+    ) -> tuple[Optional[int], str, str, int, list[str]]:
+        """Persists the complete package folder (source video, VTT, SRT, burned-in video)
+
+        to Cloud Storage and registers each deliverable in the Media Gallery (source_assets table).
+        """
         job = self.get_job_status(job_id)
         if not job or job.status != "completed":
             raise HTTPException(
@@ -1217,56 +1261,105 @@ class SubtitleService:
                 detail=f"Job {job_id} is not completed or does not exist.",
             )
 
-        primary_type = (
-            "burned_in_video" if job.burned_in_video else "toggleable_video"
-        )
-        local_video_path = self.get_artifact_file(job_id, primary_type)
+        package_name = title or f"subtitles_package_{job_id[:8]}"
+        saved_assets: list[SourceAsset] = []
+        saved_filenames: list[str] = []
 
-        gcs_uri = None
-        if self.engine.storage_client:
-            try:
-                bucket = self.engine.storage_client.bucket(
-                    self.engine.gcs_bucket_name
+        # Deliverables to save
+        items_to_save: list[tuple[str, str, MimeTypeEnum]] = [
+            ("vtt", f"{package_name}.vtt", MimeTypeEnum.VIDEO_MP4),
+            ("srt", f"{package_name}.srt", MimeTypeEnum.VIDEO_MP4),
+        ]
+        if job.burned_in_video:
+            items_to_save.append(
+                (
+                    "burned_in_video",
+                    f"{package_name} (Burned).mp4",
+                    MimeTypeEnum.VIDEO_MP4,
                 )
-                prefix = f"subtitles_outputs/{job_id}/"
-                blobs = list(bucket.list_blobs(prefix=prefix))
-                for b in blobs:
-                    if b.name.endswith(".mp4"):
-                        gcs_uri = f"gs://{self.engine.gcs_bucket_name}/{b.name}"
-                        break
-            except Exception as e:
-                logger.warning(
-                    f"Error checking GCS bucket for output video: {e}"
+            )
+        if job.default_toggleable_video:
+            items_to_save.append(
+                (
+                    "toggleable_video",
+                    f"{package_name} (Subtitled).mp4",
+                    MimeTypeEnum.VIDEO_MP4,
                 )
+            )
 
+        # Source video discovery
+        source_video_path = None
         if (
-            not gcs_uri
-            and local_video_path
-            and os.path.exists(local_video_path)
+            hasattr(job, "local_output_dir")
+            and job.local_output_dir
+            and os.path.exists(job.local_output_dir)
         ):
-            gcs_uri = self._upload_artifact_to_gcs(job_id, local_video_path)
+            for f in os.listdir(job.local_output_dir):
+                if (
+                    f.endswith(".mp4")
+                    and "burned" not in f
+                    and "toggleable" not in f
+                ):
+                    source_video_path = os.path.join(job.local_output_dir, f)
+                    break
+        if source_video_path and os.path.exists(source_video_path):
+            items_to_save.insert(
+                0,
+                (
+                    "source_video",
+                    f"{package_name} (Source).mp4",
+                    MimeTypeEnum.VIDEO_MP4,
+                ),
+            )
 
-        if not gcs_uri:
-            # Fallback GCS URI path convention
-            gcs_uri = f"gs://{self.engine.gcs_bucket_name}/subtitles_outputs/{job_id}/output_burned.mp4"
+        for file_type, filename, mime in items_to_save:
+            local_path = (
+                source_video_path
+                if file_type == "source_video"
+                else self.get_artifact_file(job_id, file_type)
+            )
+            gcs_uri = None
 
-        asset_name = title or f"Subtitled Video ({job_id[:8]})"
-        file_hash = hashlib.sha256(f"{job_id}_{gcs_uri}".encode()).hexdigest()
-        source_asset = SourceAsset(
-            workspace_id=workspace_id,
-            user_id=user_id,
-            original_filename=f"{asset_name}.mp4",
-            gcs_uri=gcs_uri,
-            mime_type=MimeTypeEnum.VIDEO_MP4,
-            aspect_ratio=AspectRatioEnum.RATIO_16_9,
-            asset_type=AssetTypeEnum.GENERIC_VIDEO,
-            scope=AssetScopeEnum.PRIVATE,
-            file_hash=file_hash,
-        )
-        db.add(source_asset)
+            if local_path and os.path.exists(local_path):
+                gcs_uri = self._upload_artifact_to_gcs(job_id, local_path)
+
+            if not gcs_uri:
+                gcs_uri = f"gs://{self.engine.gcs_bucket_name}/subtitles_packages/{package_name}/{filename}"
+
+            file_hash = hashlib.sha256(
+                f"{job_id}_{filename}_{gcs_uri}".encode()
+            ).hexdigest()
+            source_asset = SourceAsset(
+                workspace_id=workspace_id,
+                user_id=user_id,
+                original_filename=filename,
+                gcs_uri=gcs_uri,
+                mime_type=mime,
+                aspect_ratio=AspectRatioEnum.RATIO_16_9,
+                asset_type=AssetTypeEnum.GENERIC_VIDEO,
+                scope=AssetScopeEnum.PRIVATE,
+                file_hash=file_hash,
+            )
+            db.add(source_asset)
+            saved_assets.append(source_asset)
+            saved_filenames.append(filename)
+
         await db.commit()
-        await db.refresh(source_asset)
-        return source_asset
+        for sa in saved_assets:
+            await db.refresh(sa)
+
+        primary_asset = saved_assets[0] if saved_assets else None
+        primary_id = primary_asset.id if primary_asset else None
+        primary_name = package_name
+        primary_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_packages/{package_name}/"
+
+        return (
+            primary_id,
+            primary_name,
+            primary_gcs,
+            len(saved_assets),
+            saved_filenames,
+        )
 
 
 subtitle_service = SubtitleService()

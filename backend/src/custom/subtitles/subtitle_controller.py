@@ -283,7 +283,12 @@ def download_output_file(
             )
         filename = f"subtitles_{job_id[:8]}_package.zip"
         return FileResponse(
-            path=zip_file, media_type="application/zip", filename=filename
+            path=zip_file,
+            media_type="application/zip",
+            filename=filename,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            },
         )
 
     file_path = None
@@ -295,11 +300,11 @@ def download_output_file(
     elif file_type == "srt":
         file_path = status_dto.subtitles_srt
         media_type = "application/x-subrip"
-    elif file_type == "toggleable_video":
-        file_path = status_dto.default_toggleable_video
-        media_type = "video/mp4"
     elif file_type == "burned_in_video":
         file_path = status_dto.burned_in_video
+        media_type = "video/mp4"
+    elif file_type == "toggleable_video":
+        file_path = status_dto.default_toggleable_video
         media_type = "video/mp4"
 
     if not file_path or not os.path.exists(file_path):
@@ -314,7 +319,10 @@ def download_output_file(
 
     filename = os.path.basename(file_path)
     return FileResponse(
-        path=file_path, media_type=media_type, filename=filename
+        path=file_path,
+        media_type=media_type,
+        filename=filename,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -328,13 +336,19 @@ async def save_to_media_gallery(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SaveToGalleryResponseDTO:
-    """Registers the subtitled video into the PostgreSQL database as a SourceAsset."""
+    """Registers the complete subtitle package folder into the PostgreSQL database as SourceAssets."""
     target_workspace_id = (
         request_dto.workspace_id
         if request_dto.workspace_id
         else (current_user.default_workspace_id or 1)
     )
-    saved_asset = await subtitle_service.save_job_to_gallery(
+    (
+        primary_id,
+        pkg_name,
+        gcs_uri,
+        items_count,
+        saved_files,
+    ) = await subtitle_service.save_job_to_gallery(
         job_id=request_dto.job_id,
         workspace_id=target_workspace_id,
         user_id=current_user.id,
@@ -344,8 +358,10 @@ async def save_to_media_gallery(
     )
     return SaveToGalleryResponseDTO(
         success=True,
-        asset_id=saved_asset.id,
-        asset_name=saved_asset.original_filename,
-        gcs_uri=saved_asset.gcs_uri,
-        message="Successfully saved subtitled package to Media Gallery.",
+        asset_id=primary_id,
+        asset_name=pkg_name,
+        gcs_uri=gcs_uri,
+        saved_items_count=items_count,
+        saved_filenames=saved_files,
+        message=f"Successfully saved {items_count} package deliverables to Media Gallery.",
     )

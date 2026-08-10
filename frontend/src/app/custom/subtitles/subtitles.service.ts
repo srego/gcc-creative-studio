@@ -53,9 +53,11 @@ export interface SubtitleGenerationParams {
 
 export interface SaveToGalleryResponse {
   success: boolean;
-  asset_id: number;
+  asset_id?: number | null;
   asset_name: string;
   gcs_uri: string;
+  saved_items_count?: number;
+  saved_filenames?: string[];
   message: string;
 }
 

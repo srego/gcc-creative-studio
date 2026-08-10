@@ -467,6 +467,8 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
 
   readonly isSavingToGallery = signal<boolean>(false);
   readonly savedAssetId = signal<number | null>(null);
+  readonly savedItemsCount = signal<number>(0);
+  readonly savedFilenames = signal<string[]>([]);
 
   downloadCaptions(type: 'vtt' | 'srt'): void {
     const jobId = this.activeJobId();
@@ -493,21 +495,18 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     const jobId = this.activeJobId();
     if (!jobId || !isPlatformBrowser(this.platformId)) return;
 
-    const fileType = this.enableBurnedInVideo()
-      ? 'burned_in_video'
-      : 'toggleable_video';
-    this.subtitlesService.downloadFile(jobId, fileType).subscribe({
+    this.subtitlesService.downloadFile(jobId, 'burned_in_video').subscribe({
       next: blob => {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${this.currentPackageDisplayName()}.mp4`;
+        a.download = `${this.currentPackageDisplayName()} (Burned).mp4`;
         a.click();
         window.URL.revokeObjectURL(url);
       },
       error: err => {
         this.errorMessage.set(
-          `Failed to download MP4 video: ${err?.message || 'Server error'}`,
+          `Failed to download Burned-In MP4 video: ${err?.message || 'Server error'}`,
         );
       },
     });
@@ -547,7 +546,9 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       next: res => {
         this.isSavingToGallery.set(false);
         this.savedPackageName.set(res.asset_name || pkgName);
-        this.savedAssetId.set(res.asset_id);
+        this.savedAssetId.set(res.asset_id ?? null);
+        this.savedItemsCount.set(res.saved_items_count || 1);
+        this.savedFilenames.set(res.saved_filenames || []);
         this.savedToGallery.set(true);
       },
       error: err => {

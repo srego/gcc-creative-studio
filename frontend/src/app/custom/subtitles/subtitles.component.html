@@ -372,8 +372,9 @@
           </div>
 
           <div class="grid grid-cols-1 gap-2.5">
-            <!-- Primary Video Download Button -->
+            <!-- Burned-In Video Download Button (Only visible if Burned-In Video is enabled) -->
             <button
+              *ngIf="enableBurnedInVideo()"
               (click)="downloadVideo()"
               [disabled]="!isComplete()"
               [ngClass]="{'opacity-50 pointer-events-none': !isComplete()}"
@@ -382,8 +383,8 @@
               <div class="flex items-center gap-2.5">
                 <mat-icon class="text-white text-lg">movie</mat-icon>
                 <div class="text-left">
-                  <p class="font-bold text-white leading-none">Download Subtitled Video (.mp4)</p>
-                  <p class="text-[10px] text-white/80 mt-0.5">{{ currentPackageDisplayName() }}.mp4</p>
+                  <p class="font-bold text-white leading-none">Download Burned-In Video (.mp4)</p>
+                  <p class="text-[10px] text-white/80 mt-0.5">{{ currentPackageDisplayName() }} (Burned).mp4</p>
                 </div>
               </div>
               <div class="flex items-center gap-1 bg-white/20 px-2.5 py-1 rounded-lg text-[11px] font-bold group-hover:bg-white/30 transition-colors">
@@ -430,7 +431,7 @@
             >
               <div class="flex items-center gap-2">
                 <mat-icon class="text-amber-400 text-base">folder_zip</mat-icon>
-                <span>Download All Deliverables (ZIP Archive)</span>
+                <span>Download Complete Package (ZIP Archive)</span>
               </div>
               <span class="text-[10px] text-neutral-400 font-mono">.zip</span>
             </button>
@@ -449,24 +450,30 @@
               <mat-icon *ngIf="isSavingToGallery()" class="text-sm animate-spin">sync</mat-icon>
               <mat-icon *ngIf="savedToGallery()" class="text-sm">check_circle</mat-icon>
               <mat-icon *ngIf="!isSavingToGallery() && !savedToGallery()" class="text-sm">folder_special</mat-icon>
-              <span *ngIf="isSavingToGallery()">Saving to Media Gallery...</span>
-              <span *ngIf="savedToGallery()">Saved to Media Gallery</span>
-              <span *ngIf="!isSavingToGallery() && !savedToGallery()">Save Video Package to Media Gallery</span>
+              <span *ngIf="isSavingToGallery()">Saving Package Folder to Media Gallery...</span>
+              <span *ngIf="savedToGallery()">Package Saved to Media Gallery</span>
+              <span *ngIf="!isSavingToGallery() && !savedToGallery()">Save Complete Package Folder to Media Gallery</span>
             </button>
 
             <!-- Save Success Notification with Navigation Link -->
-            <div *ngIf="savedToGallery()" class="p-3 rounded-xl bg-teal-950/70 border border-teal-500/40 text-teal-200 text-xs flex items-center justify-between shadow-md">
-              <div class="flex items-center gap-2">
-                <mat-icon class="text-teal-400 text-base">collections</mat-icon>
-                <span>Saved <strong>"{{ savedPackageName() }}"</strong> to Gallery!</span>
+            <div *ngIf="savedToGallery()" class="p-3 rounded-xl bg-teal-950/70 border border-teal-500/40 text-teal-200 text-xs flex flex-col gap-2 shadow-md">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <mat-icon class="text-teal-400 text-base">collections</mat-icon>
+                  <span>Saved <strong>"{{ savedPackageName() }}"</strong> ({{ savedItemsCount() }} files: source video, .vtt, .srt) to Gallery!</span>
+                </div>
+                <a
+                  routerLink="/gallery"
+                  class="px-2.5 py-1 rounded-lg bg-teal-600 hover:bg-teal-500 text-white font-semibold text-[11px] transition-colors inline-flex items-center gap-1 shadow-sm shrink-0"
+                >
+                  <span>View in Gallery</span>
+                  <mat-icon class="text-xs">arrow_forward</mat-icon>
+                </a>
               </div>
-              <a
-                routerLink="/gallery"
-                class="px-2.5 py-1 rounded-lg bg-teal-600 hover:bg-teal-500 text-white font-semibold text-[11px] transition-colors inline-flex items-center gap-1 shadow-sm"
-              >
-                <span>View Gallery</span>
-                <mat-icon class="text-xs">arrow_forward</mat-icon>
-              </a>
+              <div *ngIf="savedFilenames().length > 0" class="text-[10px] text-teal-300/80 font-mono bg-black/30 p-2 rounded border border-teal-500/20">
+                <span>Saved Files: </span>
+                <span class="text-white">{{ savedFilenames().join(', ') }}</span>
+              </div>
             </div>
 
             <!-- Start Another Video (Reset) Button -->
