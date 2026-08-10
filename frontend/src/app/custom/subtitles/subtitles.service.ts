@@ -51,6 +51,14 @@ export interface SubtitleGenerationParams {
   burnSubtitles?: boolean;
 }
 
+export interface SaveToGalleryResponse {
+  success: boolean;
+  asset_id: number;
+  asset_name: string;
+  gcs_uri: string;
+  message: string;
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -145,12 +153,27 @@ export class SubtitlesService {
 
   downloadFile(
     jobId: string,
-    fileType: 'vtt' | 'srt' | 'toggleable_video' | 'burned_in_video',
+    fileType: 'vtt' | 'srt' | 'toggleable_video' | 'burned_in_video' | 'zip',
   ): Observable<Blob> {
     return this.http.get(
       `${this.baseUrl}/download/${jobId}?file_type=${fileType}`,
       {
         responseType: 'blob',
+      },
+    );
+  }
+
+  saveToGallery(
+    jobId: string,
+    workspaceId?: number | null,
+    title?: string,
+  ): Observable<SaveToGalleryResponse> {
+    return this.http.post<SaveToGalleryResponse>(
+      `${this.baseUrl}/save-to-gallery`,
+      {
+        job_id: jobId,
+        workspace_id: workspaceId || null,
+        title: title || null,
       },
     );
   }

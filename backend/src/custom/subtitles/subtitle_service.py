@@ -23,6 +23,7 @@ import re
 import subprocess
 import time
 import uuid
+import zipfile
 from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import HTTPException, status
@@ -31,9 +32,16 @@ from google.api_core.client_options import ClientOptions
 from google.cloud import speech_v2, storage
 from google.cloud.speech_v2.types import cloud_speech
 from google.genai import types
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.common.base_dto import AspectRatioEnum, MimeTypeEnum
 from src.config.config_service import config_service
 from src.custom.subtitles.subtitle_dto import SubtitleResponseDTO
+from src.source_assets.schema.source_asset_model import (
+    AssetScopeEnum,
+    AssetTypeEnum,
+    SourceAsset,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1159,6 +1167,102 @@ class SubtitleService:
 
         self._save_job_state(job_id, job)
         return job
+
+    def create_job_zip_package(self, job_id: str) -> Optional[str]:
+        """Bundles all generated artifacts for a job into a downloadable zip file."""
+        job = self.get_job_status(job_id)
+        if not job or job.status != "completed":
+            return None
+
+        zip_dir = os.path.join(
+            "/tmp", "subtitles_zip", job_id
+        )
+        os.makedirs(zip_dir, exist_ok=True)
+        zip_path = os.path.join(zip_dir, f"subtitle_package_{job_id}.zip")
+
+        artifacts_to_add: List[tuple[str, str]] = []
+        for file_type, arcname_suffix in [
+            ("vtt", ".vtt"),
+            ("srt", ".srt"),
+            ("burned_in_video", "_burned.mp4"),
+            ("toggleable_video", "_subtitled.mp4"),
+        ]:
+            local_path = self.get_artifact_file(job_id, file_type)
+            if local_path and os.path.exists(local_path):
+                arcname = f"subtitles_{job_id[:8]}{arcname_suffix}"
+                artifacts_to_add.append((local_path, arcname))
+
+        if not artifacts_to_add:
+            return None
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for local_file, arcname in artifacts_to_add:
+                zf.write(local_file, arcname=arcname)
+
+        return zip_path
+
+    async def save_job_to_gallery(
+        self,
+        job_id: str,
+        workspace_id: int,
+        user_id: int,
+        user_email: str,
+        db: AsyncSession,
+        title: Optional[str] = None,
+    ) -> SourceAsset:
+        """Persists the generated video from a subtitle job as a SourceAsset in the Media Gallery."""
+        job = self.get_job_status(job_id)
+        if not job or job.status != "completed":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Job {job_id} is not completed or does not exist.",
+            )
+
+        primary_type = (
+            "burned_in_video" if job.burned_in_video else "toggleable_video"
+        )
+        local_video_path = self.get_artifact_file(job_id, primary_type)
+
+        gcs_uri = None
+        if self.engine.storage_client:
+            try:
+                bucket = self.engine.storage_client.bucket(
+                    self.engine.gcs_bucket_name
+                )
+                prefix = f"subtitles_outputs/{job_id}/"
+                blobs = list(bucket.list_blobs(prefix=prefix))
+                for b in blobs:
+                    if b.name.endswith(".mp4"):
+                        gcs_uri = f"gs://{self.engine.gcs_bucket_name}/{b.name}"
+                        break
+            except Exception as e:
+                logger.warning(
+                    f"Error checking GCS bucket for output video: {e}"
+                )
+
+        if not gcs_uri and local_video_path and os.path.exists(local_video_path):
+            gcs_uri = self._upload_artifact_to_gcs(job_id, local_video_path)
+
+        if not gcs_uri:
+            # Fallback GCS URI path convention
+            gcs_uri = f"gs://{self.engine.gcs_bucket_name}/subtitles_outputs/{job_id}/output_burned.mp4"
+
+        asset_name = title or f"Subtitled Video ({job_id[:8]})"
+        source_asset = SourceAsset(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            name=asset_name,
+            original_file_name=f"{asset_name}.mp4",
+            gcs_uri=gcs_uri,
+            mime_type=MimeTypeEnum.VIDEO_MP4,
+            aspect_ratio=AspectRatioEnum.RATIO_16_9,
+            type=AssetTypeEnum.GENERIC_VIDEO,
+            scope=AssetScopeEnum.PRIVATE,
+        )
+        db.add(source_asset)
+        await db.commit()
+        await db.refresh(source_asset)
+        return source_asset
 
 
 subtitle_service = SubtitleService()

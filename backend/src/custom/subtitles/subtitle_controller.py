@@ -28,16 +28,20 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.auth.auth_guard import RoleChecker
+from src.auth.auth_guard import RoleChecker, get_current_user
 from src.custom.subtitles.subtitle_dto import (
+    SaveToGalleryRequestDTO,
+    SaveToGalleryResponseDTO,
     SubtitleRequestDTO,
     SubtitleResponseDTO,
     SubtitleUploadUrlRequestDTO,
     SubtitleUploadUrlResponseDTO,
 )
 from src.custom.subtitles.subtitle_service import subtitle_service
-from src.users.user_model import UserRoleEnum
+from src.database import get_db
+from src.users.user_model import UserModel, UserRoleEnum
 
 router = APIRouter(
     prefix="/api/v1/custom/subtitles",
@@ -270,6 +274,18 @@ def download_output_file(
             detail=f"Job {job_id} not found.",
         )
 
+    if file_type in ("zip", "all"):
+        zip_file = subtitle_service.create_job_zip_package(job_id)
+        if not zip_file or not os.path.exists(zip_file):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Unable to construct ZIP package for job {job_id}.",
+            )
+        filename = f"subtitles_{job_id[:8]}_package.zip"
+        return FileResponse(
+            path=zip_file, media_type="application/zip", filename=filename
+        )
+
     file_path = None
     media_type = "text/vtt"
 
@@ -299,4 +315,37 @@ def download_output_file(
     filename = os.path.basename(file_path)
     return FileResponse(
         path=file_path, media_type=media_type, filename=filename
+    )
+
+
+@router.post(
+    "/save-to-gallery",
+    response_model=SaveToGalleryResponseDTO,
+    summary="Save Subtitle Job Outputs to Media Gallery",
+)
+async def save_to_media_gallery(
+    request_dto: SaveToGalleryRequestDTO,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SaveToGalleryResponseDTO:
+    """Registers the subtitled video into the PostgreSQL database as a SourceAsset."""
+    target_workspace_id = (
+        request_dto.workspace_id
+        if request_dto.workspace_id
+        else (current_user.default_workspace_id or 1)
+    )
+    saved_asset = await subtitle_service.save_job_to_gallery(
+        job_id=request_dto.job_id,
+        workspace_id=target_workspace_id,
+        user_id=current_user.id,
+        user_email=current_user.email,
+        db=db,
+        title=request_dto.title,
+    )
+    return SaveToGalleryResponseDTO(
+        success=True,
+        asset_id=saved_asset.id,
+        asset_name=saved_asset.name,
+        gcs_uri=saved_asset.gcs_uri,
+        message="Successfully saved subtitled package to Media Gallery.",
     )

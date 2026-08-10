@@ -29,6 +29,7 @@ import {MatDialog} from '@angular/material/dialog';
 import {Subscription, timer, of, throwError} from 'rxjs';
 import {switchMap, catchError} from 'rxjs/operators';
 import {ImageSelectorComponent} from '../../common/components/image-selector/image-selector.component';
+import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
 import {SubtitlesService, SubtitleResponse} from './subtitles.service';
 
 export type InputSourceTab = 'upload' | 'gallery' | 'url';
@@ -51,6 +52,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   constructor(
     private dialog: MatDialog,
     private subtitlesService: SubtitlesService,
+    private workspaceStateService: WorkspaceStateService,
     @Inject(PLATFORM_ID) private platformId: object,
   ) {}
 
@@ -463,6 +465,9 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     this.errorMessage.set(errorMsg);
   }
 
+  readonly isSavingToGallery = signal<boolean>(false);
+  readonly savedAssetId = signal<number | null>(null);
+
   downloadCaptions(type: 'vtt' | 'srt'): void {
     const jobId = this.activeJobId();
     if (!jobId || !isPlatformBrowser(this.platformId)) return;
@@ -508,9 +513,53 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     });
   }
 
+  downloadAllZip(): void {
+    const jobId = this.activeJobId();
+    if (!jobId || !isPlatformBrowser(this.platformId)) return;
+
+    this.subtitlesService.downloadFile(jobId, 'zip').subscribe({
+      next: blob => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${this.currentPackageDisplayName()}_package.zip`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+      },
+      error: err => {
+        this.errorMessage.set(
+          `Failed to download ZIP bundle: ${err?.message || 'Server error'}`,
+        );
+      },
+    });
+  }
+
   saveToMediaGallery(): void {
+    const jobId = this.activeJobId();
+    if (!jobId || this.isSavingToGallery()) return;
+
     const pkgName = this.currentPackageDisplayName();
-    this.savedPackageName.set(pkgName);
-    this.savedToGallery.set(true);
+    const rawWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId = rawWorkspaceId ? Number(rawWorkspaceId) : null;
+
+    this.isSavingToGallery.set(true);
+    this.subtitlesService.saveToGallery(jobId, workspaceId, pkgName).subscribe({
+      next: res => {
+        this.isSavingToGallery.set(false);
+        this.savedPackageName.set(res.asset_name || pkgName);
+        this.savedAssetId.set(res.asset_id);
+        this.savedToGallery.set(true);
+      },
+      error: err => {
+        this.isSavingToGallery.set(false);
+        const detail =
+          err && typeof err === 'object' && 'error' in err
+            ? (err as {error?: {detail?: string}}).error?.detail
+            : err instanceof Error
+              ? err.message
+              : 'Failed to save asset to Media Gallery.';
+        this.errorMessage.set(detail || 'Failed to save asset to Media Gallery.');
+      },
+    });
   }
 }

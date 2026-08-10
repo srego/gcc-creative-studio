@@ -17,7 +17,7 @@
 import json
 import os
 import tempfile
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -873,3 +873,90 @@ def test_upload_artifact_and_get_artifact(tmp_path):
 
         # Test none returned on upload if path does not exist
         assert service._upload_artifact_to_gcs("sub_art_1", "/bad/path") is None
+
+
+def test_create_job_zip_package(tmp_path):
+    """Tests creating a zip bundle of job artifacts."""
+    service = SubtitleService()
+    dto = SubtitleResponseDTO(
+        job_id="sub_zip_1",
+        status="completed",
+        subtitles_vtt=str(tmp_path / "test.vtt"),
+        subtitles_srt=str(tmp_path / "test.srt"),
+    )
+    (tmp_path / "test.vtt").write_text("WEBVTT\n")
+    (tmp_path / "test.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nHi\n")
+    service.jobs["sub_zip_1"] = dto
+
+    with patch.object(service, "get_artifact_file") as mock_get:
+        mock_get.side_effect = lambda jid, ft: (
+            str(tmp_path / "test.vtt") if ft == "vtt" else None
+        )
+        zip_path = service.create_job_zip_package("sub_zip_1")
+        assert zip_path is not None
+        assert os.path.exists(zip_path)
+
+
+@pytest.mark.asyncio
+async def test_save_job_to_gallery():
+    """Tests saving a completed job to the Media Gallery as a SourceAsset."""
+    service = SubtitleService()
+    dto = SubtitleResponseDTO(
+        job_id="sub_gal_1",
+        status="completed",
+        burned_in_video="/tmp/output.mp4",
+    )
+    service.jobs["sub_gal_1"] = dto
+
+    mock_db = MagicMock()
+    mock_db.add = MagicMock()
+    mock_db.commit = AsyncMock() if hasattr(MagicMock, "AsyncMock") else MagicMock()
+    mock_db.refresh = AsyncMock() if hasattr(MagicMock, "AsyncMock") else MagicMock()
+
+    with patch.object(
+        service, "get_artifact_file", return_value="/tmp/output.mp4"
+    ), patch.object(
+        service,
+        "_upload_artifact_to_gcs",
+        return_value="gs://bucket/subtitles_outputs/sub_gal_1/output.mp4",
+    ), patch(
+        "os.path.exists", return_value=True
+    ):
+        asset = await service.save_job_to_gallery(
+            job_id="sub_gal_1",
+            workspace_id=1,
+            user_id=42,
+            user_email="test@example.com",
+            db=mock_db,
+            title="Podcast Subtitled",
+        )
+        assert asset is not None
+        assert asset.name == "Podcast Subtitled"
+        assert asset.workspace_id == 1
+        assert asset.user_id == 42
+
+
+def test_controller_save_to_gallery_endpoint(api_client):
+    """Tests the POST /save-to-gallery controller endpoint."""
+    from src.custom.subtitles.subtitle_service import subtitle_service
+    from src.source_assets.schema.source_asset_model import SourceAsset
+
+    mock_asset = MagicMock(spec=SourceAsset)
+    mock_asset.id = 99
+    mock_asset.name = "My Saved Video"
+    mock_asset.gcs_uri = "gs://bucket/video.mp4"
+
+    with patch.object(
+        subtitle_service,
+        "save_job_to_gallery",
+        return_value=mock_asset,
+    ):
+        response = api_client.post(
+            "/api/v1/custom/subtitles/save-to-gallery",
+            json={"job_id": "sub_gal_1", "workspace_id": 1, "title": "My Saved Video"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["asset_id"] == 99
+        assert data["asset_name"] == "My Saved Video"

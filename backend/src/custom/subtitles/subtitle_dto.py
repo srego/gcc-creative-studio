@@ -129,3 +129,29 @@ class SubtitleUploadUrlResponseDTO(BaseModel):
     gcs_uri: str = Field(
         description="Final Cloud Storage URI (gs://bucket/object) of the uploaded file.",
     )
+
+
+class SaveToGalleryRequestDTO(BaseModel):
+    """Request model for persisting subtitle package deliverables to the Media Gallery."""
+
+    job_id: str = Field(
+        description="ID of the completed subtitle generation job."
+    )
+    workspace_id: Optional[int] = Field(
+        default=None,
+        description="Target workspace ID for saving the asset.",
+    )
+    title: Optional[str] = Field(
+        default=None,
+        description="Optional title override for the saved media item.",
+    )
+
+
+class SaveToGalleryResponseDTO(BaseModel):
+    """Response model indicating successful persistence into the Media Gallery."""
+
+    success: bool = Field(description="Whether the asset was saved successfully.")
+    asset_id: int = Field(description="Database ID of the created SourceAsset.")
+    asset_name: str = Field(description="Name of the saved asset.")
+    gcs_uri: str = Field(description="GCS URI of the saved asset.")
+    message: str = Field(description="Informative message.")
