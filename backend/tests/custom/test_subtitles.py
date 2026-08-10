@@ -928,6 +928,7 @@ async def test_save_job_to_gallery():
             primary_id,
             pkg_name,
             gcs_uri,
+            thumb_uri,
             saved_count,
             saved_files,
         ) = await service.save_job_to_gallery(
@@ -953,7 +954,8 @@ def test_controller_save_to_gallery_endpoint(api_client):
         return_value=(
             99,
             "My Saved Video",
-            "gs://bucket/subtitles_packages/My_Saved_Video/",
+            "gs://bucket/subtitles_packages/My_Saved_Video/video.mp4",
+            "gs://bucket/subtitles_packages/My_Saved_Video/thumb.jpg",
             3,
             ["subtitles.vtt", "subtitles.srt", "output_burned.mp4"],
         ),

@@ -343,9 +343,10 @@ async def save_to_media_gallery(
         else (current_user.default_workspace_id or 1)
     )
     (
-        primary_id,
+        media_item_id,
         pkg_name,
-        gcs_uri,
+        primary_video_gcs,
+        thumbnail_gcs,
         items_count,
         saved_files,
     ) = await subtitle_service.save_job_to_gallery(
@@ -358,10 +359,11 @@ async def save_to_media_gallery(
     )
     return SaveToGalleryResponseDTO(
         success=True,
-        asset_id=primary_id,
+        asset_id=media_item_id,
         asset_name=pkg_name,
-        gcs_uri=gcs_uri,
+        gcs_uri=primary_video_gcs,
+        thumbnail_uri=thumbnail_gcs,
         saved_items_count=items_count,
         saved_filenames=saved_files,
-        message=f"Successfully saved {items_count} package deliverables to Media Gallery.",
+        message=f"Successfully saved {pkg_name} to Media Gallery with {items_count} attached deliverables.",
     )

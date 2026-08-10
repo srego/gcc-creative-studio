@@ -56,6 +56,7 @@ export interface SaveToGalleryResponse {
   asset_id?: number | null;
   asset_name: string;
   gcs_uri: string;
+  thumbnail_uri?: string;
   saved_items_count?: number;
   saved_filenames?: string[];
   message: string;

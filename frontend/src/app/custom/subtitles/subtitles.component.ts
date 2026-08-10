@@ -469,66 +469,108 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   readonly savedAssetId = signal<number | null>(null);
   readonly savedItemsCount = signal<number>(0);
   readonly savedFilenames = signal<string[]>([]);
+  readonly isDownloadingZip = signal<boolean>(false);
+  readonly isDownloadingFile = signal<string | null>(null);
+
+  private triggerBrowserDownload(blob: Blob, filename: string): void {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.style.display = 'none';
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      if (document.body.contains(a)) {
+        document.body.removeChild(a);
+      }
+      window.URL.revokeObjectURL(url);
+    }, 2000);
+  }
 
   downloadCaptions(type: 'vtt' | 'srt'): void {
     const jobId = this.activeJobId();
-    if (!jobId || !isPlatformBrowser(this.platformId)) return;
+    if (!jobId || !isPlatformBrowser(this.platformId) || this.isDownloadingFile()) return;
 
+    this.isDownloadingFile.set(type);
     this.subtitlesService.downloadFile(jobId, type).subscribe({
       next: blob => {
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${this.currentPackageDisplayName()}.${type}`;
-        a.click();
-        window.URL.revokeObjectURL(url);
-      },
-      error: err => {
-        this.errorMessage.set(
-          `Failed to download .${type} file: ${err?.message || 'Server error'}`,
+        this.isDownloadingFile.set(null);
+        this.triggerBrowserDownload(
+          blob,
+          `${this.currentPackageDisplayName()}.${type}`,
         );
+      },
+      error: async err => {
+        this.isDownloadingFile.set(null);
+        let msg = err?.message || 'Server error';
+        if (err?.error instanceof Blob) {
+          try {
+            const parsed = JSON.parse(await err.error.text());
+            msg = parsed?.detail || msg;
+          } catch {
+            // fallback
+          }
+        }
+        this.errorMessage.set(`Failed to download .${type} file: ${msg}`);
       },
     });
   }
 
   downloadVideo(): void {
     const jobId = this.activeJobId();
-    if (!jobId || !isPlatformBrowser(this.platformId)) return;
+    if (!jobId || !isPlatformBrowser(this.platformId) || this.isDownloadingFile()) return;
 
+    this.isDownloadingFile.set('video');
     this.subtitlesService.downloadFile(jobId, 'burned_in_video').subscribe({
       next: blob => {
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${this.currentPackageDisplayName()} (Burned).mp4`;
-        a.click();
-        window.URL.revokeObjectURL(url);
-      },
-      error: err => {
-        this.errorMessage.set(
-          `Failed to download Burned-In MP4 video: ${err?.message || 'Server error'}`,
+        this.isDownloadingFile.set(null);
+        this.triggerBrowserDownload(
+          blob,
+          `${this.currentPackageDisplayName()} (Burned).mp4`,
         );
+      },
+      error: async err => {
+        this.isDownloadingFile.set(null);
+        let msg = err?.message || 'Server error';
+        if (err?.error instanceof Blob) {
+          try {
+            const parsed = JSON.parse(await err.error.text());
+            msg = parsed?.detail || msg;
+          } catch {
+            // fallback
+          }
+        }
+        this.errorMessage.set(`Failed to download Burned-In MP4 video: ${msg}`);
       },
     });
   }
 
   downloadAllZip(): void {
     const jobId = this.activeJobId();
-    if (!jobId || !isPlatformBrowser(this.platformId)) return;
+    if (!jobId || !isPlatformBrowser(this.platformId) || this.isDownloadingZip()) return;
 
+    this.isDownloadingZip.set(true);
     this.subtitlesService.downloadFile(jobId, 'zip').subscribe({
       next: blob => {
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${this.currentPackageDisplayName()}_package.zip`;
-        a.click();
-        window.URL.revokeObjectURL(url);
-      },
-      error: err => {
-        this.errorMessage.set(
-          `Failed to download ZIP bundle: ${err?.message || 'Server error'}`,
+        this.isDownloadingZip.set(false);
+        this.triggerBrowserDownload(
+          blob,
+          `${this.currentPackageDisplayName()}_package.zip`,
         );
+      },
+      error: async err => {
+        this.isDownloadingZip.set(false);
+        let msg = err?.message || 'Server error';
+        if (err?.error instanceof Blob) {
+          try {
+            const parsed = JSON.parse(await err.error.text());
+            msg = parsed?.detail || msg;
+          } catch {
+            // fallback
+          }
+        }
+        this.errorMessage.set(`Failed to download ZIP bundle: ${msg}`);
       },
     });
   }
@@ -558,9 +600,9 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
             ? (err as {error?: {detail?: string}}).error?.detail
             : err instanceof Error
               ? err.message
-              : 'Failed to save asset to Media Gallery.';
+              : 'Failed to save creation to Media Gallery.';
         this.errorMessage.set(
-          detail || 'Failed to save asset to Media Gallery.',
+          detail || 'Failed to save creation to Media Gallery.',
         );
       },
     });

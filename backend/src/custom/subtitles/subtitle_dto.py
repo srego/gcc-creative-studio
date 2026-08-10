@@ -155,15 +155,18 @@ class SaveToGalleryResponseDTO(BaseModel):
     )
     asset_id: Optional[int] = Field(
         default=None,
-        description="Database ID of the primary created SourceAsset.",
+        description="Database ID of the created MediaItem.",
     )
-    asset_name: str = Field(description="Name of the saved package folder.")
-    gcs_uri: str = Field(description="GCS URI folder of the saved package.")
+    asset_name: str = Field(description="Name of the saved creation.")
+    gcs_uri: str = Field(description="Primary GCS URI of the saved creation.")
+    thumbnail_uri: Optional[str] = Field(
+        default=None, description="GCS URI of the video thumbnail."
+    )
     saved_items_count: int = Field(
-        default=1, description="Total number of items saved in package folder."
+        default=1, description="Total number of deliverables attached."
     )
     saved_filenames: list[str] = Field(
         default_factory=list,
-        description="List of all filenames saved in package folder.",
+        description="List of all attached deliverable filenames.",
     )
     message: str = Field(description="Informative message.")

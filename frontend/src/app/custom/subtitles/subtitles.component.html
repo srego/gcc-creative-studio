@@ -425,13 +425,15 @@
             <!-- Download Complete ZIP Package Button -->
             <button
               (click)="downloadAllZip()"
-              [disabled]="!isComplete()"
-              [ngClass]="{'opacity-50 pointer-events-none': !isComplete()}"
+              [disabled]="!isComplete() || isDownloadingZip()"
+              [ngClass]="{'opacity-50 pointer-events-none': !isComplete() || isDownloadingZip()}"
               class="w-full py-2.5 px-4 rounded-xl bg-neutral-900/80 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 text-neutral-300 hover:text-white text-xs font-medium transition-all flex items-center justify-between group cursor-pointer"
             >
               <div class="flex items-center gap-2">
-                <mat-icon class="text-amber-400 text-base">folder_zip</mat-icon>
-                <span>Download Complete Package (ZIP Archive)</span>
+                <mat-icon *ngIf="!isDownloadingZip()" class="text-amber-400 text-base">folder_zip</mat-icon>
+                <mat-icon *ngIf="isDownloadingZip()" class="text-amber-400 text-base animate-spin">sync</mat-icon>
+                <span *ngIf="!isDownloadingZip()">Download All Deliverables (ZIP Archive)</span>
+                <span *ngIf="isDownloadingZip()">Preparing & Downloading ZIP Archive...</span>
               </div>
               <span class="text-[10px] text-neutral-400 font-mono">.zip</span>
             </button>
@@ -450,9 +452,9 @@
               <mat-icon *ngIf="isSavingToGallery()" class="text-sm animate-spin">sync</mat-icon>
               <mat-icon *ngIf="savedToGallery()" class="text-sm">check_circle</mat-icon>
               <mat-icon *ngIf="!isSavingToGallery() && !savedToGallery()" class="text-sm">folder_special</mat-icon>
-              <span *ngIf="isSavingToGallery()">Saving Package Folder to Media Gallery...</span>
-              <span *ngIf="savedToGallery()">Package Saved to Media Gallery</span>
-              <span *ngIf="!isSavingToGallery() && !savedToGallery()">Save Complete Package Folder to Media Gallery</span>
+              <span *ngIf="isSavingToGallery()">Saving Creation to Media Gallery...</span>
+              <span *ngIf="savedToGallery()">Saved to Media Gallery</span>
+              <span *ngIf="!isSavingToGallery() && !savedToGallery()">Save Video to Media Gallery</span>
             </button>
 
             <!-- Save Success Notification with Navigation Link -->
@@ -460,7 +462,7 @@
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
                   <mat-icon class="text-teal-400 text-base">collections</mat-icon>
-                  <span>Saved <strong>"{{ savedPackageName() }}"</strong> ({{ savedItemsCount() }} files: source video, .vtt, .srt) to Gallery!</span>
+                  <span>Saved <strong>"{{ savedPackageName() }}"</strong> to Gallery with {{ savedItemsCount() }} deliverables attached!</span>
                 </div>
                 <a
                   routerLink="/gallery"
@@ -471,7 +473,7 @@
                 </a>
               </div>
               <div *ngIf="savedFilenames().length > 0" class="text-[10px] text-teal-300/80 font-mono bg-black/30 p-2 rounded border border-teal-500/20">
-                <span>Saved Files: </span>
+                <span>Attached Deliverables: </span>
                 <span class="text-white">{{ savedFilenames().join(', ') }}</span>
               </div>
             </div>
