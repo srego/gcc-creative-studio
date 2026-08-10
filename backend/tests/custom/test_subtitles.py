@@ -1207,7 +1207,7 @@ def test_media_item_model_source_assets_sanitization():
         "model": "chirp_3+gemini-2.5-flash",
         "aspect_ratio": "16:9",
         "gcs_uris": ["gs://bucket/video.mp4"],
-        "source_assets": [{"asset_id": 123, "role": "main_subject"}],
+        "source_assets": [{"asset_id": 123, "role": "input"}],
         "raw_data": {},
     }
     model_valid = MediaItemModel.model_validate(item_data_valid)
@@ -1234,4 +1234,3 @@ async def test_gallery_service_defensive_enrichment():
         )
         is None
     )
-

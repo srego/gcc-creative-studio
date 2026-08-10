@@ -289,7 +289,9 @@ class MediaItemModel(BaseDocument):
             valid = []
             for item in v:
                 if isinstance(item, dict):
-                    if ("asset_id" in item or "assetId" in item) and "role" in item:
+                    if (
+                        "asset_id" in item or "assetId" in item
+                    ) and "role" in item:
                         valid.append(item)
                 elif (
                     hasattr(item, "asset_id")
