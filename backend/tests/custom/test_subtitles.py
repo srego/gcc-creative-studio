@@ -910,12 +910,8 @@ async def test_save_job_to_gallery():
 
     mock_db = MagicMock()
     mock_db.add = MagicMock()
-    mock_db.commit = (
-        AsyncMock() if hasattr(MagicMock, "AsyncMock") else MagicMock()
-    )
-    mock_db.refresh = (
-        AsyncMock() if hasattr(MagicMock, "AsyncMock") else MagicMock()
-    )
+    mock_db.commit = AsyncMock()
+    mock_db.refresh = AsyncMock()
 
     with (
         patch.object(
