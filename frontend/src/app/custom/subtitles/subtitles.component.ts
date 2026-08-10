@@ -14,7 +14,17 @@
  * limitations under the License.
  */
 
-import {Component, OnInit, OnDestroy, signal, computed} from '@angular/core';
+import {isPlatformBrowser} from '@angular/common';
+import {HttpErrorResponse} from '@angular/common/http';
+import {
+  Component,
+  OnInit,
+  OnDestroy,
+  signal,
+  computed,
+  PLATFORM_ID,
+  Inject,
+} from '@angular/core';
 import {MatDialog} from '@angular/material/dialog';
 import {Subscription, timer, of, throwError} from 'rxjs';
 import {switchMap, catchError} from 'rxjs/operators';
@@ -41,6 +51,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   constructor(
     private dialog: MatDialog,
     private subtitlesService: SubtitlesService,
+    @Inject(PLATFORM_ID) private platformId: object,
   ) {}
 
   // Navigation & Input Signals
@@ -146,11 +157,13 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
 
   private cleanupPreviewUrl(): void {
     const current = this.previewVideoUrl();
-    if (current && current.startsWith('blob:')) {
+    if (
+      isPlatformBrowser(this.platformId) &&
+      current &&
+      current.startsWith('blob:')
+    ) {
       try {
-        if (typeof window !== 'undefined' && window.URL) {
-          window.URL.revokeObjectURL(current);
-        }
+        window.URL.revokeObjectURL(current);
       } catch (err) {
         console.debug('Failed to revoke object URL', err);
       }
@@ -175,7 +188,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       this.cleanupPreviewUrl();
       this.selectedFile.set(file);
       this.previewVideoUrl.set(
-        typeof window !== 'undefined' && window.URL
+        isPlatformBrowser(this.platformId)
           ? window.URL.createObjectURL(file)
           : '',
       );
@@ -262,7 +275,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       this.cleanupPreviewUrl();
       this.selectedFile.set(file);
       this.previewVideoUrl.set(
-        typeof window !== 'undefined' && window.URL
+        isPlatformBrowser(this.platformId)
           ? window.URL.createObjectURL(file)
           : '',
       );
@@ -452,7 +465,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
 
   downloadCaptions(type: 'vtt' | 'srt'): void {
     const jobId = this.activeJobId();
-    if (!jobId) return;
+    if (!jobId || !isPlatformBrowser(this.platformId)) return;
 
     this.subtitlesService.downloadFile(jobId, type).subscribe({
       next: blob => {
@@ -473,7 +486,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
 
   downloadVideo(): void {
     const jobId = this.activeJobId();
-    if (!jobId) return;
+    if (!jobId || !isPlatformBrowser(this.platformId)) return;
 
     const fileType = this.enableBurnedInVideo()
       ? 'burned_in_video'
