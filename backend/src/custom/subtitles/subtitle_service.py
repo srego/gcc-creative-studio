@@ -1483,13 +1483,32 @@ class SubtitleService:
             or self.get_artifact_file(job_id, "toggleable_video")
             or source_video_path
         )
-        if (
-            not os.path.exists(local_thumb) or os.path.getsize(local_thumb) == 0
-        ) and video_for_thumb:
+        thumb_exists = False
+        try:
+            if (
+                os.path.exists(local_thumb)
+                and os.path.isfile(local_thumb)
+                and os.path.getsize(local_thumb) > 0
+            ):
+                thumb_exists = True
+        except Exception:
+            thumb_exists = False
+
+        if not thumb_exists and video_for_thumb:
             self.engine.generate_thumbnail(video_for_thumb, local_thumb)
 
-        if os.path.exists(local_thumb) and os.path.getsize(local_thumb) > 0:
-            thumbnail_gcs = self._upload_artifact_to_gcs(job_id, local_thumb)
+        try:
+            if (
+                os.path.exists(local_thumb)
+                and os.path.isfile(local_thumb)
+                and os.path.getsize(local_thumb) > 0
+            ):
+                thumbnail_gcs = self._upload_artifact_to_gcs(
+                    job_id, local_thumb
+                )
+        except Exception:
+            thumbnail_gcs = None
+
         if not thumbnail_gcs:
             thumbnail_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_packages/{package_name}/thumbnail.jpg"
 
