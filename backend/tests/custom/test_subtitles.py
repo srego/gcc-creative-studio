@@ -17,7 +17,7 @@
 import json
 import os
 import tempfile
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
 from fastapi import HTTPException
@@ -1029,3 +1029,58 @@ def test_save_job_to_gallery_uncompleted_error():
             )
         )
     assert exc_info.value.status_code == 400
+
+
+def test_get_artifact_file_gcs_matching():
+    """Tests get_artifact_file GCS blob searching and downloading."""
+    from src.custom.subtitles.subtitle_service import SubtitleService
+
+    service = SubtitleService()
+    dto = SubtitleResponseDTO(
+        job_id="sub_art_gcs",
+        status="completed",
+    )
+    service.jobs["sub_art_gcs"] = dto
+
+    mock_blob = MagicMock()
+    mock_blob.name = "subtitles_outputs/sub_art_gcs/subtitles.vtt"
+    mock_blob.download_to_filename = MagicMock()
+
+    mock_bucket = MagicMock()
+    mock_bucket.list_blobs.return_value = [mock_blob]
+
+    mock_storage = MagicMock()
+    mock_storage.bucket.return_value = mock_bucket
+    service.engine.storage_client = mock_storage
+
+    with (
+        patch("os.path.exists", return_value=False),
+        patch("os.makedirs"),
+    ):
+        res = service.get_artifact_file("sub_art_gcs", "vtt")
+        assert res is not None
+        assert res.endswith("subtitles.vtt")
+
+
+def test_create_job_zip_package_empty_manifest():
+    """Tests create_job_zip_package creating a manifest if no artifacts exist."""
+    from src.custom.subtitles.subtitle_service import SubtitleService
+
+    service = SubtitleService()
+    dto = SubtitleResponseDTO(
+        job_id="sub_zip_empty",
+        status="completed",
+    )
+    service.jobs["sub_zip_empty"] = dto
+    service.engine.storage_client = None
+
+    with (
+        patch.object(service, "get_artifact_file", return_value=None),
+        patch("os.path.exists", return_value=False),
+        patch("os.makedirs"),
+        patch("builtins.open", mock_open()),
+        patch("zipfile.ZipFile") as mock_zip,
+    ):
+        res = service.create_job_zip_package("sub_zip_empty")
+        assert res is not None
+        assert "subtitles_sub_zip__package.zip" in res
