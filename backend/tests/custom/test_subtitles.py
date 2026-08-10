@@ -1144,7 +1144,7 @@ def test_process_video_gcs_and_callbacks():
         ),
         patch.object(
             engine,
-            "refine_subtitles_gemini",
+            "refine_gemini36",
             return_value=[{"start": 0.0, "end": 1.0, "text": "Hello world."}],
         ),
         patch.object(
