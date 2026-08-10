@@ -14,9 +14,9 @@
 
 import datetime
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 from sqlalchemy import (
     Boolean,
@@ -279,6 +279,27 @@ class MediaItemModel(BaseDocument):
     to the source assets from the 'user_assets' collection and specifies the role
     each one played in the generation.
     """
+
+    @field_validator("source_assets", mode="before")
+    @classmethod
+    def filter_valid_source_assets(cls, v: Any) -> list[Any] | None:
+        if not v:
+            return []
+        if isinstance(v, list):
+            valid = []
+            for item in v:
+                if isinstance(item, dict):
+                    if ("asset_id" in item or "assetId" in item) and "role" in item:
+                        valid.append(item)
+                elif (
+                    hasattr(item, "asset_id")
+                    and item.asset_id
+                    and hasattr(item, "role")
+                    and item.role
+                ):
+                    valid.append(item)
+            return valid
+        return v
 
     source_media_items: list[SourceMediaItemLink] | None = None
     """

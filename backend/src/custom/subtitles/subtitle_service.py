@@ -1229,100 +1229,110 @@ class SubtitleService:
 
     def create_job_zip_package(self, job_id: str) -> Optional[str]:
         """Bundles all generated artifacts for a job into a downloadable zip file."""
-        job = self.get_job_status(job_id)
-        if not job:
-            return None
+        try:
+            job = self.get_job_status(job_id)
+            if not job:
+                return None
 
-        zip_dir = os.path.join("/tmp", "subtitles_zip", job_id)
-        os.makedirs(zip_dir, exist_ok=True)
-        zip_path = os.path.join(zip_dir, f"subtitles_{job_id[:8]}_package.zip")
+            zip_dir = os.path.join("/tmp", "subtitles_zip", job_id)
+            os.makedirs(zip_dir, exist_ok=True)
+            zip_path = os.path.join(
+                zip_dir, f"subtitles_{job_id[:8]}_package.zip"
+            )
 
-        artifacts_to_add: List[tuple[str, str]] = []
+            artifacts_to_add: List[tuple[str, str]] = []
 
-        # 1. Collect from local output directory
-        if (
-            hasattr(job, "local_output_dir")
-            and job.local_output_dir
-            and os.path.exists(job.local_output_dir)
-            and os.path.isdir(job.local_output_dir)
-        ):
-            try:
-                for f in os.listdir(job.local_output_dir):
-                    full_p = os.path.join(job.local_output_dir, f)
-                    if os.path.isfile(full_p) and not f.startswith("."):
-                        artifacts_to_add.append((full_p, f))
-            except Exception as e:
-                logger.debug(f"Error reading local output dir: {e}")
-
-        # 2. Collect from /tmp/subtitles_outputs/{job_id}
-        dest_dir = f"/tmp/subtitles_outputs/{job_id}"
-        if os.path.exists(dest_dir) and os.path.isdir(dest_dir):
-            try:
-                for f in os.listdir(dest_dir):
-                    full_p = os.path.join(dest_dir, f)
-                    if (
-                        os.path.isfile(full_p)
-                        and not f.startswith(".")
-                        and not any(arc == f for _, arc in artifacts_to_add)
-                    ):
-                        artifacts_to_add.append((full_p, f))
-            except Exception as e:
-                logger.debug(f"Error reading dest_dir: {e}")
-
-        # 3. Pull directly from Cloud Storage if empty
-        if self.engine.storage_client:
-            try:
-                bucket = self.engine.storage_client.bucket(
-                    self.engine.gcs_bucket_name
-                )
-                blobs = list(
-                    bucket.list_blobs(prefix=f"subtitles_outputs/{job_id}/")
-                )
-                os.makedirs(dest_dir, exist_ok=True)
-                for blob in blobs:
-                    fname = os.path.basename(blob.name)
-                    if fname and not fname.startswith("."):
-                        dest_f = os.path.join(dest_dir, fname)
-                        if not os.path.exists(dest_f):
-                            blob.download_to_filename(dest_f)
-                        if not any(arc == fname for _, arc in artifacts_to_add):
-                            artifacts_to_add.append((dest_f, fname))
-            except Exception as e:
-                logger.warning(
-                    f"Error reading GCS bucket for zip packaging: {e}"
-                )
-
-        # 4. Fallback explicit items
-        if not artifacts_to_add:
-            for file_type, arcname in [
-                ("vtt", "subtitles.vtt"),
-                ("srt", "subtitles.srt"),
-                ("burned_in_video", "subtitled_burned.mp4"),
-                ("toggleable_video", "subtitled_toggleable.mp4"),
-            ]:
-                local_path = self.get_artifact_file(job_id, file_type)
-                if local_path and os.path.exists(local_path):
-                    artifacts_to_add.append((local_path, arcname))
-
-        if not artifacts_to_add:
-            info_file = os.path.join(zip_dir, "job_manifest.txt")
-            with open(info_file, "w", encoding="utf-8") as f:
-                f.write(
-                    f"Subtitle Job ID: {job_id}\nStatus: {job.status}\nSegments: {job.segment_count}\n"
-                )
-            artifacts_to_add.append((info_file, "job_manifest.txt"))
-
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for local_file, arcname in artifacts_to_add:
+            # 1. Collect from local output directory
+            if (
+                hasattr(job, "local_output_dir")
+                and job.local_output_dir
+                and os.path.exists(job.local_output_dir)
+                and os.path.isdir(job.local_output_dir)
+            ):
                 try:
-                    if os.path.exists(local_file) and os.path.isfile(
-                        local_file
-                    ):
-                        zf.write(local_file, arcname=arcname)
+                    for f in os.listdir(job.local_output_dir):
+                        full_p = os.path.join(job.local_output_dir, f)
+                        if os.path.isfile(full_p) and not f.startswith("."):
+                            artifacts_to_add.append((full_p, f))
                 except Exception as e:
-                    logger.debug(f"Could not add {local_file} to zip: {e}")
+                    logger.debug(f"Error reading local output dir: {e}")
 
-        return zip_path
+            # 2. Collect from /tmp/subtitles_outputs/{job_id}
+            dest_dir = f"/tmp/subtitles_outputs/{job_id}"
+            if os.path.exists(dest_dir) and os.path.isdir(dest_dir):
+                try:
+                    for f in os.listdir(dest_dir):
+                        full_p = os.path.join(dest_dir, f)
+                        if (
+                            os.path.isfile(full_p)
+                            and not f.startswith(".")
+                            and not any(arc == f for _, arc in artifacts_to_add)
+                        ):
+                            artifacts_to_add.append((full_p, f))
+                except Exception as e:
+                    logger.debug(f"Error reading dest_dir: {e}")
+
+            # 3. Pull directly from Cloud Storage if empty
+            if self.engine.storage_client:
+                try:
+                    bucket = self.engine.storage_client.bucket(
+                        self.engine.gcs_bucket_name
+                    )
+                    blobs = list(
+                        bucket.list_blobs(prefix=f"subtitles_outputs/{job_id}/")
+                    )
+                    os.makedirs(dest_dir, exist_ok=True)
+                    for blob in blobs:
+                        fname = os.path.basename(blob.name)
+                        if fname and not fname.startswith("."):
+                            dest_f = os.path.join(dest_dir, fname)
+                            if not os.path.exists(dest_f):
+                                blob.download_to_filename(dest_f)
+                            if not any(
+                                arc == fname for _, arc in artifacts_to_add
+                            ):
+                                artifacts_to_add.append((dest_f, fname))
+                except Exception as e:
+                    logger.warning(
+                        f"Error reading GCS bucket for zip packaging: {e}"
+                    )
+
+            # 4. Fallback explicit items
+            if not artifacts_to_add:
+                for file_type, arcname in [
+                    ("vtt", "subtitles.vtt"),
+                    ("srt", "subtitles.srt"),
+                    ("burned_in_video", "subtitled_burned.mp4"),
+                    ("toggleable_video", "subtitled_toggleable.mp4"),
+                ]:
+                    local_path = self.get_artifact_file(job_id, file_type)
+                    if local_path and os.path.exists(local_path):
+                        artifacts_to_add.append((local_path, arcname))
+
+            if not artifacts_to_add:
+                info_file = os.path.join(zip_dir, "job_manifest.txt")
+                with open(info_file, "w", encoding="utf-8") as f:
+                    f.write(
+                        f"Subtitle Job ID: {job_id}\nStatus: {job.status}\nSegments: {job.segment_count}\n"
+                    )
+                artifacts_to_add.append((info_file, "job_manifest.txt"))
+
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for local_file, arcname in artifacts_to_add:
+                    try:
+                        if os.path.exists(local_file) and os.path.isfile(
+                            local_file
+                        ):
+                            zf.write(local_file, arcname=arcname)
+                    except Exception as e:
+                        logger.debug(f"Could not add {local_file} to zip: {e}")
+
+            return zip_path
+        except Exception as e:
+            logger.error(
+                f"Unexpected error constructing ZIP package for {job_id}: {e}"
+            )
+            return None
 
     async def save_job_to_gallery(
         self,
@@ -1525,12 +1535,13 @@ class SubtitleService:
             status=JobStatusEnum.COMPLETED.value,
             gcs_uris=[primary_video_gcs] if primary_video_gcs else [],
             thumbnail_uris=[thumbnail_gcs] if thumbnail_gcs else [],
-            source_assets=attached_deliverables,
+            source_assets=[],
             raw_data={
                 "job_id": job_id,
                 "package_name": package_name,
                 "segment_count": job.segment_count,
                 "deliverables": saved_filenames,
+                "deliverable_items": attached_deliverables,
                 "created_via": "subtitles_studio",
             },
         )

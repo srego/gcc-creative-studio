@@ -1177,3 +1177,61 @@ def test_process_video_gcs_and_callbacks():
         assert res is not None
         assert res["segment_count"] == 1
         assert len(progress_updates) >= 4
+
+
+def test_media_item_model_source_assets_sanitization():
+    """Tests that MediaItemModel filters out malformed/dict source_assets via field_validator."""
+    from src.common.schema.media_item_model import MediaItemModel
+
+    # 1. Test with invalid dicts lacking asset_id and role
+    item_data = {
+        "workspace_id": 1,
+        "user_email": "test@example.com",
+        "mime_type": "video/mp4",
+        "model": "chirp_3+gemini-2.5-flash",
+        "aspect_ratio": "16:9",
+        "gcs_uris": ["gs://bucket/video.mp4"],
+        "source_assets": [
+            {"name": "subtitles.vtt", "gcs_uri": "gs://bucket/subtitles.vtt"}
+        ],
+        "raw_data": {"created_via": "subtitles_studio"},
+    }
+    model = MediaItemModel.model_validate(item_data)
+    assert model.source_assets == []
+
+    # 2. Test with valid dicts containing asset_id and role
+    item_data_valid = {
+        "workspace_id": 1,
+        "user_email": "test@example.com",
+        "mime_type": "video/mp4",
+        "model": "chirp_3+gemini-2.5-flash",
+        "aspect_ratio": "16:9",
+        "gcs_uris": ["gs://bucket/video.mp4"],
+        "source_assets": [{"asset_id": 123, "role": "main_subject"}],
+        "raw_data": {},
+    }
+    model_valid = MediaItemModel.model_validate(item_data_valid)
+    assert len(model_valid.source_assets) == 1
+    assert model_valid.source_assets[0].asset_id == 123
+
+
+@pytest.mark.asyncio
+async def test_gallery_service_defensive_enrichment():
+    """Tests GalleryService._enrich_source_asset_link with malformed or missing assets."""
+    from src.galleries.gallery_service import GalleryService
+
+    service = GalleryService.__new__(GalleryService)
+    service.source_asset_repo = MagicMock()
+    service.source_asset_repo.get_by_id = AsyncMock(return_value=None)
+    service.iam_signer_credentials = MagicMock()
+
+    # Should safely return None on invalid inputs without throwing
+    assert await service._enrich_source_asset_link(None) is None
+    assert await service._enrich_source_asset_link({}) is None
+    assert (
+        await service._enrich_source_asset_link(
+            {"name": "test.vtt", "gcs_uri": "gs://..."}
+        )
+        is None
+    )
+

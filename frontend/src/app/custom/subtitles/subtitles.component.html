@@ -360,16 +360,6 @@
             </div>
           </div>
 
-          <!-- Local Saved Folder Location Badge -->
-          <div *ngIf="isComplete() && localOutputDir()" class="p-3.5 rounded-xl bg-indigo-950/60 border border-indigo-500/30 text-indigo-200 text-xs flex flex-col gap-1.5 shadow-md">
-            <div class="flex items-center gap-2 font-semibold text-indigo-300">
-              <mat-icon class="text-indigo-400 text-base">folder_open</mat-icon>
-              <span>Saved Locally to Workspace:</span>
-            </div>
-            <code class="text-[11px] font-mono bg-black/40 px-2.5 py-1.5 rounded-lg border border-white/5 text-neutral-300 break-all select-all">
-              {{ localOutputDir() }}
-            </code>
-          </div>
 
           <div class="grid grid-cols-1 gap-2.5">
             <!-- Burned-In Video Download Button (Only visible if Burned-In Video is enabled) -->

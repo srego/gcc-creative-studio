@@ -267,63 +267,79 @@ def download_output_file(
     file_type: str = "vtt",
 ) -> FileResponse:
     """Streams or downloads the specified generated artifact for a job."""
-    status_dto = subtitle_service.get_job_status(job_id)
-    if not status_dto:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job {job_id} not found.",
-        )
-
-    if file_type in ("zip", "all"):
-        zip_file = subtitle_service.create_job_zip_package(job_id)
-        if not zip_file or not os.path.exists(zip_file):
+    try:
+        status_dto = subtitle_service.get_job_status(job_id)
+        if not status_dto:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Unable to construct ZIP package for job {job_id}.",
+                detail=f"Job {job_id} not found.",
             )
-        filename = f"subtitles_{job_id[:8]}_package.zip"
+
+        if file_type in ("zip", "all"):
+            zip_file = subtitle_service.create_job_zip_package(job_id)
+            if not zip_file or not os.path.exists(zip_file):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Unable to construct ZIP package for job {job_id}.",
+                )
+            filename = f"subtitles_{job_id[:8]}_package.zip"
+            return FileResponse(
+                path=zip_file,
+                media_type="application/zip",
+                filename=filename,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"'
+                },
+            )
+
+        file_path = None
+        media_type = "text/vtt"
+
+        if file_type == "vtt":
+            file_path = status_dto.subtitles_vtt
+            media_type = "text/vtt"
+        elif file_type == "srt":
+            file_path = status_dto.subtitles_srt
+            media_type = "application/x-subrip"
+        elif file_type == "burned_in_video":
+            file_path = status_dto.burned_in_video
+            media_type = "video/mp4"
+        elif file_type == "toggleable_video":
+            file_path = status_dto.default_toggleable_video
+            media_type = "video/mp4"
+
+        if not file_path or not os.path.exists(file_path):
+            resolved_file = subtitle_service.get_artifact_file(
+                job_id, file_type
+            )
+            if resolved_file and os.path.exists(resolved_file):
+                file_path = resolved_file
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Requested file type '{file_type}' is not available for job {job_id}.",
+                )
+
+        filename = os.path.basename(file_path)
         return FileResponse(
-            path=zip_file,
-            media_type="application/zip",
+            path=file_path,
+            media_type=media_type,
             filename=filename,
             headers={
                 "Content-Disposition": f'attachment; filename="{filename}"'
             },
         )
-
-    file_path = None
-    media_type = "text/vtt"
-
-    if file_type == "vtt":
-        file_path = status_dto.subtitles_vtt
-        media_type = "text/vtt"
-    elif file_type == "srt":
-        file_path = status_dto.subtitles_srt
-        media_type = "application/x-subrip"
-    elif file_type == "burned_in_video":
-        file_path = status_dto.burned_in_video
-        media_type = "video/mp4"
-    elif file_type == "toggleable_video":
-        file_path = status_dto.default_toggleable_video
-        media_type = "video/mp4"
-
-    if not file_path or not os.path.exists(file_path):
-        resolved_file = subtitle_service.get_artifact_file(job_id, file_type)
-        if resolved_file and os.path.exists(resolved_file):
-            file_path = resolved_file
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Requested file type '{file_type}' is not available for job {job_id}.",
-            )
-
-    filename = os.path.basename(file_path)
-    return FileResponse(
-        path=file_path,
-        media_type=media_type,
-        filename=filename,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Error processing download for job {job_id} ({file_type}): {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process download request: {str(e)}",
+        )
 
 
 @router.post(
