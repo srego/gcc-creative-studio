@@ -1084,3 +1084,91 @@ def test_create_job_zip_package_empty_manifest():
         res = service.create_job_zip_package("sub_zip_empty")
         assert res is not None
         assert "subtitles_sub_zip__package.zip" in res
+
+
+def test_embed_soft_subtitles_ffmpeg_file_not_found():
+    """Tests file not found checks in embed_soft_subtitles_ffmpeg."""
+    from src.custom.subtitles.subtitle_service import PodcastSubtitleEngine
+
+    engine = PodcastSubtitleEngine()
+    with patch("os.path.exists", return_value=False):
+        with pytest.raises(FileNotFoundError):
+            engine.embed_soft_subtitles_ffmpeg(
+                "/nonexistent/video.mp4", "/tmp/sub.vtt", "/tmp/out.mp4"
+            )
+
+
+def test_burn_subtitles_ffmpeg_file_not_found():
+    """Tests file not found checks in burn_subtitles_ffmpeg."""
+    from src.custom.subtitles.subtitle_service import PodcastSubtitleEngine
+
+    engine = PodcastSubtitleEngine()
+    with patch("os.path.exists", return_value=False):
+        with pytest.raises(FileNotFoundError):
+            engine.burn_subtitles_ffmpeg(
+                "/nonexistent/video.mp4", "/tmp/sub.srt", "/tmp/out.mp4"
+            )
+
+
+def test_process_video_gcs_and_callbacks():
+    """Tests process_video with progress callbacks and fallback branches."""
+    from src.custom.subtitles.subtitle_service import PodcastSubtitleEngine
+
+    engine = PodcastSubtitleEngine()
+    progress_updates = []
+
+    def callback(step, pct):
+        progress_updates.append((step, pct))
+
+    with (
+        patch.object(
+            engine,
+            "transcribe_chirp3",
+            return_value={
+                "full_text": "Hello world.",
+                "words": [
+                    {
+                        "word": "Hello",
+                        "start_offset": 0.0,
+                        "end_offset": 0.5,
+                        "confidence": 0.99,
+                    },
+                    {
+                        "word": "world",
+                        "start_offset": 0.6,
+                        "end_offset": 1.0,
+                        "confidence": 0.99,
+                    },
+                ],
+            },
+        ),
+        patch.object(
+            engine,
+            "refine_subtitles_gemini",
+            return_value=[{"start": 0.0, "end": 1.0, "text": "Hello world."}],
+        ),
+        patch.object(
+            engine,
+            "burn_subtitles_ffmpeg",
+            return_value="/tmp/test_burned.mp4",
+        ),
+        patch.object(
+            engine,
+            "embed_soft_subtitles_ffmpeg",
+            return_value="/tmp/test_soft.mp4",
+        ),
+        patch.object(
+            engine, "generate_thumbnail", return_value="/tmp/thumb.jpg"
+        ),
+        patch("os.path.exists", return_value=True),
+        patch("os.makedirs"),
+    ):
+        res = engine.process_video(
+            video_path="/tmp/video.mp4",
+            job_dir="/tmp/test_job",
+            generate_burned_in=True,
+            progress_callback=callback,
+        )
+        assert res is not None
+        assert res["segment_count"] == 1
+        assert len(progress_updates) >= 4
