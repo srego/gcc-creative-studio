@@ -1194,7 +1194,9 @@ class SubtitleService:
         if job.default_toggleable_video:
             local_path = self.get_artifact_file(job_id, "toggleable_video")
             if local_path and os.path.exists(local_path):
-                artifacts_to_add.append((local_path, "subtitled_toggleable.mp4"))
+                artifacts_to_add.append(
+                    (local_path, "subtitled_toggleable.mp4")
+                )
 
         # 4. Collect Transcript JSON if present
         local_transcript = os.path.join(

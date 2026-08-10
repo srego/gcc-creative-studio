@@ -154,7 +154,8 @@ class SaveToGalleryResponseDTO(BaseModel):
         description="Whether the asset was saved successfully."
     )
     asset_id: Optional[int] = Field(
-        default=None, description="Database ID of the primary created SourceAsset."
+        default=None,
+        description="Database ID of the primary created SourceAsset.",
     )
     asset_name: str = Field(description="Name of the saved package folder.")
     gcs_uri: str = Field(description="GCS URI folder of the saved package.")
