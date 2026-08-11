@@ -156,7 +156,13 @@ export class SubtitlesService {
 
   getDownloadUrl(
     jobId: string,
-    fileType: 'vtt' | 'srt' | 'toggleable_video' | 'burned_in_video' | 'zip' | 'source_video' = 'burned_in_video',
+    fileType:
+      | 'vtt'
+      | 'srt'
+      | 'toggleable_video'
+      | 'burned_in_video'
+      | 'zip'
+      | 'source_video' = 'burned_in_video',
   ): string {
     return `${this.baseUrl}/download/${jobId}?file_type=${fileType}`;
   }
@@ -165,12 +171,9 @@ export class SubtitlesService {
     jobId: string,
     fileType: 'vtt' | 'srt' | 'toggleable_video' | 'burned_in_video' | 'zip',
   ): Observable<Blob> {
-    return this.http.get(
-      this.getDownloadUrl(jobId, fileType),
-      {
-        responseType: 'blob',
-      },
-    );
+    return this.http.get(this.getDownloadUrl(jobId, fileType), {
+      responseType: 'blob',
+    });
   }
 
   saveToGallery(
