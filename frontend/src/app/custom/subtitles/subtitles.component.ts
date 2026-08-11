@@ -156,20 +156,41 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     this.route.queryParamMap.subscribe(params => {
       const jobId = params.get('job_id');
       const gcsUri = params.get('gcs_uri');
-      const title = params.get('title');
+      const videoUrl = params.get('video_url');
+      const packageName =
+        params.get('package_name') || params.get('title') || '';
+
+      if (videoUrl) {
+        this.cleanupPreviewUrl();
+        this.previewVideoUrl.set(videoUrl);
+      }
+      if (packageName) {
+        this.packageName.set(packageName);
+      }
 
       if (jobId) {
         this.loadExistingJob(jobId);
+      } else if (packageName && videoUrl) {
+        // Direct completed restoration from Gallery for previously subtitled items
+        this.processingStep.set('completed');
+        this.progressPercentage.set(100);
+        this.isProcessing.set(false);
+        this.enableBurnedInVideo.set(true);
+        if (gcsUri) {
+          this.activeJobId.set(packageName);
+          this.selectedGalleryAsset.set({
+            id: 'gallery_source',
+            title: packageName,
+            url: gcsUri,
+          });
+        }
       } else if (gcsUri) {
         this.activeTab.set('gallery');
         this.selectedGalleryAsset.set({
           id: 'gallery_source',
-          title: title || 'Gallery Video',
+          title: packageName || 'Gallery Video',
           url: gcsUri,
         });
-        if (title) {
-          this.packageName.set(title);
-        }
       }
     });
   }
@@ -196,13 +217,20 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
         }
       },
       error: (err: HttpErrorResponse | Error | unknown) => {
-        const detail =
-          err && typeof err === 'object' && 'error' in err
-            ? (err as {error?: {detail?: string}}).error?.detail
-            : err instanceof Error
-              ? err.message
-              : 'Subtitle job not found.';
-        this.handleJobFailure(detail || 'Subtitle job not found.');
+        // If the browser already has previewVideoUrl from route params, remain in completed preview state
+        if (this.previewVideoUrl()) {
+          this.processingStep.set('completed');
+          this.progressPercentage.set(100);
+          this.isProcessing.set(false);
+        } else {
+          const detail =
+            err && typeof err === 'object' && 'error' in err
+              ? (err as {error?: {detail?: string}}).error?.detail
+              : err instanceof Error
+                ? err.message
+                : 'Subtitle job not found.';
+          this.handleJobFailure(detail || 'Subtitle job not found.');
+        }
       },
     });
   }

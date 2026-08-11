@@ -1111,6 +1111,10 @@ class SubtitleService:
             blobs = list(
                 bucket.list_blobs(prefix=f"subtitles_outputs/{job_id}/")
             )
+            if not blobs:
+                blobs = list(
+                    bucket.list_blobs(prefix=f"subtitles_packages/{job_id}/")
+                )
             for blob in blobs:
                 filename = os.path.basename(blob.name)
                 matched = False
