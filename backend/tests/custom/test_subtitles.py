@@ -1403,3 +1403,90 @@ def test_get_artifact_file_all_types():
         assert service.get_artifact_file(job_id, "toggleable_video") is not None
         assert service.get_artifact_file(job_id, "source_video") is not None
         assert service.get_artifact_file(job_id, "thumbnail") is not None
+
+
+def test_finish_job_from_asr_direct():
+    """Tests _finish_job_from_asr execution with mocked downstream results."""
+    service = SubtitleService()
+    job_id = service.create_job()
+    job = service.get_job_status(job_id)
+    job.source_video_path = "/tmp/fake_video.mp4"
+    job.burn_subtitles = True
+    service._save_job_state(job_id, job)
+
+    with (
+        patch("os.path.exists", return_value=True),
+        patch.object(
+            service.engine,
+            "finalize_downstream",
+            return_value={
+                "subtitles_vtt": "/tmp/subtitles.vtt",
+                "subtitles_srt": "/tmp/subtitles.srt",
+                "default_toggleable_video": "/tmp/toggleable.mp4",
+                "burned_in_video": "/tmp/burned.mp4",
+                "segment_count": 2,
+                "transcript_text": "Direct test",
+                "thumbnail_jpg": "/tmp/thumb.jpg",
+            },
+        ),
+        patch.object(
+            service, "_upload_artifact_to_gcs", return_value="gs://bucket/out"
+        ),
+    ):
+        finished = service._finish_job_from_asr(
+            job_id, job, {"full_text": "Direct test", "words": []}
+        )
+        assert finished.status == "completed"
+        assert finished.progress == 100
+        assert finished.subtitles_vtt == "/tmp/subtitles.vtt"
+        assert finished.burned_in_video == "/tmp/burned.mp4"
+
+
+def test_get_job_status_recovery_branch():
+    """Tests recovery branch in get_job_status when job was left in formatting step."""
+    service = SubtitleService()
+    job_id = service.create_job()
+    job = service.get_job_status(job_id)
+    job.status = "processing"
+    job.step = "formatting"
+    job.operation_name = "projects/123/locations/us/operations/op_recov"
+    service._save_job_state(job_id, job)
+
+    mock_op_proto = MagicMock()
+    mock_op_proto.done = True
+    mock_op_proto.HasField.return_value = False
+
+    service.engine.speech_client = MagicMock()
+    service.engine.speech_client.operations_client.get_operation.return_value = (
+        mock_op_proto
+    )
+
+    with (
+        patch.object(
+            service.engine,
+            "parse_speech_response",
+            return_value={"full_text": "Recovery text", "words": []},
+        ),
+        patch.object(service, "_run_async_finish") as mock_raf,
+    ):
+        res = service.get_job_status(job_id)
+        assert res is not None
+        assert job_id in service._active_finishing_jobs
+        service._active_finishing_jobs.discard(job_id)
+
+
+def test_run_async_finish_error_handling():
+    """Tests _run_async_finish handles exceptions and records failure."""
+    service = SubtitleService()
+    job_id = service.create_job()
+    job = service.get_job_status(job_id)
+
+    with patch.object(
+        service,
+        "_finish_job_from_asr",
+        side_effect=RuntimeError("FFmpeg crashed"),
+    ):
+        service._run_async_finish(job_id, job, {"words": []})
+        assert job.status == "failed"
+        assert "FFmpeg crashed" in (job.error_message or "")
+        assert job_id not in service._active_finishing_jobs
