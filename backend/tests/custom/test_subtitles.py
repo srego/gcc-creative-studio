@@ -17,6 +17,7 @@
 import json
 import os
 import tempfile
+import time
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
@@ -1292,6 +1293,13 @@ def test_get_job_status_lro_completion():
         mock_op_proto
     )
 
+    def mock_finish(jid, j, asr):
+        j.status = "completed"
+        j.progress = 100
+        j.subtitles_vtt = "/tmp/subtitles.vtt"
+        service._save_job_state(jid, j)
+        return j
+
     with (
         patch.object(
             service.engine,
@@ -1309,23 +1317,11 @@ def test_get_job_status_lro_completion():
             },
         ),
         patch.object(
-            service.engine,
-            "finalize_downstream",
-            return_value={
-                "subtitles_vtt": "/tmp/subtitles.vtt",
-                "subtitles_srt": "/tmp/subtitles.srt",
-                "default_toggleable_video": "/tmp/toggleable.mp4",
-                "burned_in_video": "/tmp/burned.mp4",
-                "segment_count": 1,
-                "transcript_text": "LRO finished text",
-                "thumbnail_jpg": "/tmp/thumb.jpg",
-            },
-        ),
-        patch.object(
             service,
-            "_upload_artifact_to_gcs",
-            return_value="gs://bucket/out.mp4",
+            "_finish_job_from_asr",
+            side_effect=mock_finish,
         ),
+    ):
         res = service.get_job_status(job_id)
         assert res is not None
         for _ in range(50):
