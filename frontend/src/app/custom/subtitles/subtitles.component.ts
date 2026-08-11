@@ -82,6 +82,8 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   readonly processingStep = signal<SubtitleStep>('idle');
   readonly progressPercentage = signal<number>(0);
   readonly isDraggingOver = signal<boolean>(false);
+  readonly sourceVideoPreviewUrl = signal<string | null>(null);
+  readonly subtitledVideoPreviewUrl = signal<string | null>(null);
   readonly previewVideoUrl = signal<string | null>(null);
   readonly savedToGallery = signal<boolean>(false);
   readonly savedPackageName = signal<string>('');
@@ -161,7 +163,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
         params.get('package_name') || params.get('title') || '';
 
       if (videoUrl) {
-        this.cleanupPreviewUrl();
+        this.sourceVideoPreviewUrl.set(videoUrl);
         this.previewVideoUrl.set(videoUrl);
       }
       if (packageName) {
@@ -176,8 +178,10 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
         this.progressPercentage.set(100);
         this.isProcessing.set(false);
         this.enableBurnedInVideo.set(true);
+        this.subtitledVideoPreviewUrl.set(videoUrl);
         if (gcsUri) {
           this.activeJobId.set(packageName);
+          this.sourceVideoPreviewUrl.set(gcsUri);
           this.selectedGalleryAsset.set({
             id: 'gallery_source',
             title: packageName,
@@ -186,6 +190,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
         }
       } else if (gcsUri) {
         this.activeTab.set('gallery');
+        this.sourceVideoPreviewUrl.set(gcsUri);
         this.selectedGalleryAsset.set({
           id: 'gallery_source',
           title: packageName || 'Gallery Video',
@@ -241,16 +246,28 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   }
 
   private cleanupPreviewUrl(): void {
-    const current = this.previewVideoUrl();
+    const currentSrc = this.sourceVideoPreviewUrl();
     if (
       isPlatformBrowser(this.platformId) &&
-      current &&
-      current.startsWith('blob:')
+      currentSrc &&
+      currentSrc.startsWith('blob:')
     ) {
       try {
-        window.URL.revokeObjectURL(current);
+        window.URL.revokeObjectURL(currentSrc);
       } catch (err) {
-        console.debug('Failed to revoke object URL', err);
+        console.debug('Failed to revoke source object URL', err);
+      }
+    }
+    const currentSub = this.subtitledVideoPreviewUrl();
+    if (
+      isPlatformBrowser(this.platformId) &&
+      currentSub &&
+      currentSub.startsWith('blob:')
+    ) {
+      try {
+        window.URL.revokeObjectURL(currentSub);
+      } catch (err) {
+        console.debug('Failed to revoke subtitled object URL', err);
       }
     }
   }
@@ -272,11 +289,12 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       const file = input.files[0];
       this.cleanupPreviewUrl();
       this.selectedFile.set(file);
-      this.previewVideoUrl.set(
-        isPlatformBrowser(this.platformId)
-          ? window.URL.createObjectURL(file)
-          : '',
-      );
+      const objUrl = isPlatformBrowser(this.platformId)
+        ? window.URL.createObjectURL(file)
+        : '';
+      this.sourceVideoPreviewUrl.set(objUrl);
+      this.subtitledVideoPreviewUrl.set(null);
+      this.previewVideoUrl.set(objUrl);
       this.selectedGalleryAsset.set(null);
       this.videoUrl.set('');
       input.value = '';
@@ -329,6 +347,8 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   selectGalleryAsset(asset: {id: string; title: string; url: string}): void {
     this.cleanupPreviewUrl();
     this.selectedGalleryAsset.set(asset);
+    this.sourceVideoPreviewUrl.set(asset.url);
+    this.subtitledVideoPreviewUrl.set(null);
     this.previewVideoUrl.set(asset.url);
     this.selectedFile.set(null);
     this.videoUrl.set('');
@@ -340,7 +360,9 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       this.cleanupPreviewUrl();
       this.selectedFile.set(null);
       this.selectedGalleryAsset.set(null);
-      this.previewVideoUrl.set(null);
+      this.sourceVideoPreviewUrl.set(url.trim());
+      this.subtitledVideoPreviewUrl.set(null);
+      this.previewVideoUrl.set(url.trim());
     }
   }
 
@@ -363,11 +385,12 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       const file = event.dataTransfer.files[0];
       this.cleanupPreviewUrl();
       this.selectedFile.set(file);
-      this.previewVideoUrl.set(
-        isPlatformBrowser(this.platformId)
-          ? window.URL.createObjectURL(file)
-          : '',
-      );
+      const objUrl = isPlatformBrowser(this.platformId)
+        ? window.URL.createObjectURL(file)
+        : '';
+      this.sourceVideoPreviewUrl.set(objUrl);
+      this.subtitledVideoPreviewUrl.set(null);
+      this.previewVideoUrl.set(objUrl);
       this.selectedGalleryAsset.set(null);
       this.videoUrl.set('');
     }
@@ -400,6 +423,8 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     this.selectedGalleryAsset.set(null);
     this.videoUrl.set('');
     this.packageName.set('');
+    this.sourceVideoPreviewUrl.set(null);
+    this.subtitledVideoPreviewUrl.set(null);
     this.previewVideoUrl.set(null);
     this.processingStep.set('idle');
     this.progressPercentage.set(0);
@@ -538,14 +563,22 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
 
     if (res.job_id) {
       this.activeJobId.set(res.job_id);
-      this.cleanupPreviewUrl();
       const videoFileType =
         res.burned_in_video || this.enableBurnedInVideo()
           ? 'burned_in_video'
           : 'toggleable_video';
-      this.previewVideoUrl.set(
-        this.subtitlesService.getDownloadUrl(res.job_id, videoFileType),
+      const streamUrl = this.subtitlesService.getDownloadUrl(
+        res.job_id,
+        videoFileType,
       );
+      this.subtitledVideoPreviewUrl.set(streamUrl);
+      this.previewVideoUrl.set(streamUrl);
+
+      if (!this.sourceVideoPreviewUrl()) {
+        this.sourceVideoPreviewUrl.set(
+          this.subtitlesService.getDownloadUrl(res.job_id, 'source_video'),
+        );
+      }
     }
   }
 
