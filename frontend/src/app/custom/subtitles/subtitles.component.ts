@@ -296,30 +296,32 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       panelClass: 'image-selector-dialog',
     });
 
-    dialogRef.afterClosed().subscribe((result: Record<string, any> | null) => {
-      if (result) {
-        let title = 'Selected Gallery Asset';
-        let url = '';
-        if ('original_filename' in result) {
-          title = String(result['original_filename']);
-          url = String(result['gcs_uri'] || '');
-        } else if ('mediaItem' in result && result['mediaItem']) {
-          const item = result['mediaItem'];
-          title = item.title || item.filename || 'Gallery Video';
-          url = item.gcs_uri || item.url || '';
-        } else if (typeof result === 'object' && result['title']) {
-          title = String(result['title']);
-          url = String(result['url'] || result['gcs_uri'] || '');
+    dialogRef
+      .afterClosed()
+      .subscribe((result: Record<string, unknown> | null) => {
+        if (result) {
+          let title = 'Selected Gallery Asset';
+          let url = '';
+          if ('original_filename' in result && result['original_filename']) {
+            title = String(result['original_filename']);
+            url = String(result['gcs_uri'] || '');
+          } else if ('mediaItem' in result && result['mediaItem']) {
+            const item = result['mediaItem'] as Record<string, unknown>;
+            title = String(item['title'] || item['filename'] || 'Gallery Video');
+            url = String(item['gcs_uri'] || item['url'] || '');
+          } else if (typeof result === 'object' && result['title']) {
+            title = String(result['title']);
+            url = String(result['url'] || result['gcs_uri'] || '');
+          }
+          this.selectGalleryAsset({
+            id: String(result['id'] || 'gallery-selected'),
+            title: title || 'Media Gallery Video',
+            url:
+              url ||
+              'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+          });
         }
-        this.selectGalleryAsset({
-          id: String(result['id'] || 'gallery-selected'),
-          title: title || 'Media Gallery Video',
-          url:
-            url ||
-            'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-        });
-      }
-    });
+      });
   }
 
   selectGalleryAsset(asset: {id: string; title: string; url: string}): void {
