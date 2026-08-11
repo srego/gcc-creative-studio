@@ -154,12 +154,19 @@ export class SubtitlesService {
     return this.http.get<SubtitleResponse>(`${this.baseUrl}/status/${jobId}`);
   }
 
+  getDownloadUrl(
+    jobId: string,
+    fileType: 'vtt' | 'srt' | 'toggleable_video' | 'burned_in_video' | 'zip' | 'source_video' = 'burned_in_video',
+  ): string {
+    return `${this.baseUrl}/download/${jobId}?file_type=${fileType}`;
+  }
+
   downloadFile(
     jobId: string,
     fileType: 'vtt' | 'srt' | 'toggleable_video' | 'burned_in_video' | 'zip',
   ): Observable<Blob> {
     return this.http.get(
-      `${this.baseUrl}/download/${jobId}?file_type=${fileType}`,
+      this.getDownloadUrl(jobId, fileType),
       {
         responseType: 'blob',
       },

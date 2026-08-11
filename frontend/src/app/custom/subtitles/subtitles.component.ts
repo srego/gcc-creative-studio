@@ -536,12 +536,15 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     this.isProcessing.set(false);
     this.localOutputDir.set(res.local_output_dir || null);
 
-    if (res.default_toggleable_video || res.burned_in_video) {
+    if (res.job_id) {
+      this.activeJobId.set(res.job_id);
       this.cleanupPreviewUrl();
+      const videoFileType =
+        res.burned_in_video || this.enableBurnedInVideo()
+          ? 'burned_in_video'
+          : 'toggleable_video';
       this.previewVideoUrl.set(
-        res.burned_in_video ||
-          res.default_toggleable_video ||
-          this.previewVideoUrl(),
+        this.subtitlesService.getDownloadUrl(res.job_id, videoFileType),
       );
     }
   }
@@ -618,12 +621,16 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       return;
 
     this.isDownloadingFile.set('video');
-    this.subtitlesService.downloadFile(jobId, 'burned_in_video').subscribe({
+    const fileType = this.enableBurnedInVideo()
+      ? 'burned_in_video'
+      : 'toggleable_video';
+    this.subtitlesService.downloadFile(jobId, fileType).subscribe({
       next: blob => {
         this.isDownloadingFile.set(null);
+        const suffix = this.enableBurnedInVideo() ? ' (Burned)' : '';
         this.triggerBrowserDownload(
           blob,
-          `${this.currentPackageDisplayName()} (Burned).mp4`,
+          `${this.currentPackageDisplayName()}${suffix}.mp4`,
         );
       },
       error: async err => {
@@ -637,7 +644,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
             // fallback
           }
         }
-        this.errorMessage.set(`Failed to download Burned-In MP4 video: ${msg}`);
+        this.errorMessage.set(`Failed to download MP4 video: ${msg}`);
       },
     });
   }

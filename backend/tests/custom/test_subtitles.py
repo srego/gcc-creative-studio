@@ -1234,3 +1234,171 @@ async def test_gallery_service_defensive_enrichment():
         )
         is None
     )
+
+
+def test_parse_speech_response():
+    """Tests parse_speech_response helper with mock cloud_speech types."""
+    engine = PodcastSubtitleEngine()
+    empty_res = engine.parse_speech_response(None)
+    assert empty_res == {"full_text": "", "words": []}
+
+    mock_resp = MagicMock()
+    mock_file = MagicMock()
+    mock_file.error.code = 0
+    mock_alt = MagicMock()
+    mock_alt.transcript = "Hello world"
+    w1 = MagicMock()
+    w1.word = "Hello"
+    w1.start_offset.total_seconds.return_value = 0.0
+    w1.end_offset.total_seconds.return_value = 0.5
+    w1.speaker_label = "1"
+
+    w2 = MagicMock()
+    w2.word = "world"
+    w2.start_offset.total_seconds.return_value = 0.5
+    w2.end_offset.total_seconds.return_value = 1.0
+    w2.speaker_label = "1"
+
+    mock_alt.words = [w1, w2]
+    mock_result = MagicMock()
+    mock_result.alternatives = [mock_alt]
+    mock_file.transcript.results = [mock_result]
+    mock_resp.results = {"file1": mock_file}
+
+    parsed = engine.parse_speech_response(mock_resp)
+    assert parsed["full_text"] == "Hello world"
+    assert len(parsed["words"]) == 2
+    assert parsed["words"][0]["word"] == "Hello"
+
+
+def test_get_job_status_lro_completion():
+    """Tests get_job_status polling and completing an active GCP Speech LRO."""
+    service = SubtitleService()
+    job_id = service.create_job()
+    job = service.get_job_status(job_id)
+    job.status = "processing"
+    job.step = "transcribing"
+    job.operation_name = "projects/123/locations/us/operations/op456"
+    job.source_video_path = "gs://bucket/test.mp4"
+    job.burn_subtitles = True
+    service._save_job_state(job_id, job)
+
+    mock_op_proto = MagicMock()
+    mock_op_proto.done = True
+    mock_op_proto.HasField.return_value = False
+
+    service.engine.speech_client = MagicMock()
+    service.engine.speech_client.operations_client.get_operation.return_value = (
+        mock_op_proto
+    )
+
+    with (
+        patch.object(
+            service.engine,
+            "parse_speech_response",
+            return_value={
+                "full_text": "LRO finished text",
+                "words": [
+                    {
+                        "word": "LRO",
+                        "start_time": 0.0,
+                        "end_time": 1.0,
+                        "speaker": "Speaker 1",
+                    }
+                ],
+            },
+        ),
+        patch.object(
+            service.engine,
+            "finalize_downstream",
+            return_value={
+                "subtitles_vtt": "/tmp/subtitles.vtt",
+                "subtitles_srt": "/tmp/subtitles.srt",
+                "default_toggleable_video": "/tmp/toggleable.mp4",
+                "burned_in_video": "/tmp/burned.mp4",
+                "segment_count": 1,
+                "transcript_text": "LRO finished text",
+                "thumbnail_jpg": "/tmp/thumb.jpg",
+            },
+        ),
+        patch.object(
+            service,
+            "_upload_artifact_to_gcs",
+            return_value="gs://bucket/out.mp4",
+        ),
+    ):
+        res = service.get_job_status(job_id)
+        assert res is not None
+        assert res.status == "completed"
+        assert res.progress == 100
+        assert res.subtitles_vtt == "/tmp/subtitles.vtt"
+
+
+def test_get_job_status_lro_error():
+    """Tests get_job_status handling an error in GCP Speech LRO."""
+    service = SubtitleService()
+    job_id = service.create_job()
+    job = service.get_job_status(job_id)
+    job.status = "processing"
+    job.step = "transcribing"
+    job.operation_name = "projects/123/locations/us/operations/op_err"
+    service._save_job_state(job_id, job)
+
+    mock_op_proto = MagicMock()
+    mock_op_proto.done = True
+    mock_op_proto.HasField.return_value = True
+    mock_op_proto.error.message = "Chirp quota exceeded"
+
+    service.engine.speech_client = MagicMock()
+    service.engine.speech_client.operations_client.get_operation.return_value = (
+        mock_op_proto
+    )
+
+    res = service.get_job_status(job_id)
+    assert res is not None
+    assert res.status == "failed"
+    assert "Chirp quota exceeded" in (res.error_message or "")
+
+
+def test_get_artifact_file_all_types():
+    """Tests get_artifact_file GCS resolution for all media types."""
+    service = SubtitleService()
+    job_id = service.create_job()
+    job = service.get_job_status(job_id)
+    job.subtitles_vtt = "/nonexistent/path/sub.vtt"
+    service._save_job_state(job_id, job)
+
+    mock_storage = MagicMock()
+    service.engine.storage_client = mock_storage
+    mock_bucket = MagicMock()
+    mock_storage.bucket.return_value = mock_bucket
+
+    b_vtt = MagicMock()
+    b_vtt.name = f"subtitles_outputs/{job_id}/test.vtt"
+    b_srt = MagicMock()
+    b_srt.name = f"subtitles_outputs/{job_id}/test.srt"
+    b_burned = MagicMock()
+    b_burned.name = f"subtitles_outputs/{job_id}/output_burned_in.mp4"
+    b_toggle = MagicMock()
+    b_toggle.name = f"subtitles_outputs/{job_id}/output_toggleable.mp4"
+    b_source = MagicMock()
+    b_source.name = f"subtitles_outputs/{job_id}/source_video.mp4"
+    b_thumb = MagicMock()
+    b_thumb.name = f"subtitles_outputs/{job_id}/thumbnail.jpg"
+
+    mock_bucket.list_blobs.return_value = [
+        b_vtt,
+        b_srt,
+        b_burned,
+        b_toggle,
+        b_source,
+        b_thumb,
+    ]
+
+    with patch("os.path.exists", return_value=True):
+        assert service.get_artifact_file(job_id, "vtt") is not None
+        assert service.get_artifact_file(job_id, "srt") is not None
+        assert service.get_artifact_file(job_id, "burned_in_video") is not None
+        assert service.get_artifact_file(job_id, "toggleable_video") is not None
+        assert service.get_artifact_file(job_id, "source_video") is not None
+        assert service.get_artifact_file(job_id, "thumbnail") is not None

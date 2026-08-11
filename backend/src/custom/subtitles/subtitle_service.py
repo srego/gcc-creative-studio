@@ -764,12 +764,9 @@ Word timing data:
             logger.warning(f"Could not write transcript.json: {e}")
 
         if generate_burned_in and burned_in_video_path:
-            try:
-                self.burn_subtitles_ffmpeg(
-                    video_path, vtt_path, burned_in_video_path
-                )
-            except Exception as e:
-                logger.warning(f"Hardburn video generation skipped/failed: {e}")
+            self.burn_subtitles_ffmpeg(
+                video_path, vtt_path, burned_in_video_path
+            )
 
         # Extract a preview thumbnail frame
         thumbnail_path = os.path.join(job_dir, "thumbnail.jpg")
@@ -985,10 +982,28 @@ class SubtitleService:
             os.makedirs(job_dir, exist_ok=True)
 
             video_path = job.source_video_path or ""
-            if not video_path or not os.path.exists(video_path):
-                video_path = (
-                    self.get_artifact_file(job_id, "source_video") or video_path
-                )
+            if video_path.startswith("gs://"):
+                local_source = os.path.join(job_dir, "source_video.mp4")
+                if not os.path.exists(local_source):
+                    parts = video_path.replace("gs://", "").split("/", 1)
+                    bucket_name = parts[0]
+                    blob_name = (
+                        parts[1] if len(parts) > 1 else "source_video.mp4"
+                    )
+                    if self.engine.storage_client:
+                        blob = self.engine.storage_client.bucket(
+                            bucket_name
+                        ).blob(blob_name)
+                        blob.download_to_filename(local_source)
+                video_path = local_source
+            elif not os.path.exists(video_path):
+                resolved = self.get_artifact_file(job_id, "source_video")
+                if resolved and os.path.exists(resolved):
+                    video_path = resolved
+                else:
+                    raise FileNotFoundError(
+                        f"Source video for job {job_id} could not be retrieved from GCS or local disk."
+                    )
 
             def update_progress(step: str, prog: int) -> None:
                 job.step = step
@@ -1027,6 +1042,7 @@ class SubtitleService:
             self._upload_artifact_to_gcs(job_id, job.subtitles_srt)
             self._upload_artifact_to_gcs(job_id, job.default_toggleable_video)
             self._upload_artifact_to_gcs(job_id, job.burned_in_video)
+            self._upload_artifact_to_gcs(job_id, result.get("thumbnail_jpg"))
 
         except Exception as e:
             logger.error(
@@ -1198,7 +1214,10 @@ class SubtitleService:
             ) from exc
 
     def _upload_artifact_to_gcs(
-        self, job_id: str, local_path: Optional[str]
+        self,
+        job_id: str,
+        local_path: Optional[str],
+        target_filename: Optional[str] = None,
     ) -> Optional[str]:
         """Uploads a generated output file to Cloud Storage for persistent multi-instance availability."""
         if not local_path or not os.path.exists(local_path):
@@ -1212,7 +1231,7 @@ class SubtitleService:
                 or "creative-studio-delta-cs-development-bucket"
             )
             bucket = self.engine.storage_client.bucket(bucket_name)
-            filename = os.path.basename(local_path)
+            filename = target_filename or os.path.basename(local_path)
             blob_name = f"subtitles_outputs/{job_id}/{filename}"
             blob = bucket.blob(blob_name)
             blob.upload_from_filename(local_path)
@@ -1232,10 +1251,12 @@ class SubtitleService:
             file_path = status_dto.subtitles_vtt
         elif file_type == "srt":
             file_path = status_dto.subtitles_srt
-        elif file_type == "toggleable_video":
+        elif file_type in ("toggleable_video", "toggleable"):
             file_path = status_dto.default_toggleable_video
-        elif file_type == "burned_in_video":
+        elif file_type in ("burned_in_video", "burned"):
             file_path = status_dto.burned_in_video
+        elif file_type in ("source_video", "source"):
+            file_path = status_dto.source_video_path
 
         if file_path and os.path.exists(file_path):
             return file_path
@@ -1270,12 +1291,21 @@ class SubtitleService:
                     and filename.endswith(".mp4")
                 ):
                     matched = True
-                elif file_type in (
-                    "toggleable_video",
-                    "video",
-                    "source_video",
-                    "source",
-                ) and filename.endswith(".mp4"):
+                elif (
+                    file_type in ("toggleable_video", "toggleable")
+                    and ("toggleable" in filename or "default" in filename)
+                    and filename.endswith(".mp4")
+                ):
+                    matched = True
+                elif (
+                    file_type in ("source_video", "source")
+                    and ("source" in filename or filename == "source_video.mp4")
+                    and filename.endswith(".mp4")
+                ):
+                    matched = True
+                elif file_type in ("video", "any_video") and filename.endswith(
+                    ".mp4"
+                ):
                     matched = True
                 elif file_type in ("thumbnail", "thumbnail_jpg") and (
                     filename.endswith(".jpg") or filename.endswith(".png")
@@ -1311,10 +1341,18 @@ class SubtitleService:
                 job_id=job_id, status="pending", step="idle", progress=0
             )
 
+        # Stage local source video to GCS immediately for multi-instance durability
+        if not video_path.startswith("gs://") and os.path.exists(video_path):
+            staged_gcs = self._upload_artifact_to_gcs(
+                job_id, video_path, target_filename="source_video.mp4"
+            )
+            job.source_video_path = staged_gcs or video_path
+        else:
+            job.source_video_path = video_path
+
         job.status = "processing"
         job.step = "extracting"
         job.progress = 10
-        job.source_video_path = video_path
         job.burn_subtitles = burn_subtitles
         job.language_code = language_code
         self._save_job_state(job_id, job)
