@@ -1405,17 +1405,21 @@ def test_get_artifact_file_all_types():
         assert service.get_artifact_file(job_id, "thumbnail") is not None
 
 
-def test_finish_job_from_asr_direct():
+def test_finish_job_from_asr_direct(tmp_path):
     """Tests _finish_job_from_asr execution with mocked downstream results."""
     service = SubtitleService()
     job_id = service.create_job()
     job = service.get_job_status(job_id)
-    job.source_video_path = "/tmp/fake_video.mp4"
+    job_dir = tmp_path / "job_dir"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    video_file = job_dir / "fake_video.mp4"
+    video_file.write_bytes(b"dummy")
+    job.local_output_dir = str(job_dir)
+    job.source_video_path = str(video_file)
     job.burn_subtitles = True
     service._save_job_state(job_id, job)
 
     with (
-        patch("os.path.exists", return_value=True),
         patch.object(
             service.engine,
             "finalize_downstream",
