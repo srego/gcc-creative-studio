@@ -144,8 +144,66 @@ class PodcastSubtitleEngine:
                     break
         return downloaded_file
 
+    def parse_speech_response(
+        self, response: cloud_speech.BatchRecognizeResponse
+    ) -> Dict[str, Any]:
+        """Parses speech recognition results into word-level timestamps and transcript."""
+        words_data: List[Dict[str, Any]] = []
+        full_transcript_parts: List[str] = []
+
+        if not response or not hasattr(response, "results"):
+            return {"full_text": "", "words": []}
+
+        for _, file_res in response.results.items():
+            err_code = getattr(getattr(file_res, "error", None), "code", 0)
+            if isinstance(err_code, int) and err_code != 0:
+                raise RuntimeError(
+                    f"Speech-to-Text v2 error ({err_code}): {getattr(file_res.error, 'message', '')}"
+                )
+            if not hasattr(file_res, "transcript") or not file_res.transcript:
+                continue
+            for result in file_res.transcript.results:
+                if not result.alternatives:
+                    continue
+                alt = result.alternatives[0]
+                full_transcript_parts.append(alt.transcript)
+                for w in alt.words:
+                    start_sec = (
+                        w.start_offset.total_seconds()
+                        if hasattr(w.start_offset, "total_seconds")
+                        else (
+                            w.start_offset.seconds + w.start_offset.nanos / 1e9
+                        )
+                    )
+                    end_sec = (
+                        w.end_offset.total_seconds()
+                        if hasattr(w.end_offset, "total_seconds")
+                        else (w.end_offset.seconds + w.end_offset.nanos / 1e9)
+                    )
+                    speaker_tag = (
+                        str(w.speaker_label)
+                        if hasattr(w, "speaker_label") and w.speaker_label
+                        else "1"
+                    )
+                    words_data.append(
+                        {
+                            "word": w.word,
+                            "start_time": round(start_sec, 3),
+                            "end_time": round(end_sec, 3),
+                            "speaker": f"Speaker {speaker_tag}",
+                        }
+                    )
+
+        return {
+            "full_text": " ".join(full_transcript_parts),
+            "words": words_data,
+        }
+
     def transcribe_chirp3(
-        self, audio_path_or_gcs_uri: str, language_code: str = "en-US"
+        self,
+        audio_path_or_gcs_uri: str,
+        language_code: str = "en-US",
+        on_operation_started: Optional[Callable[[str], None]] = None,
     ) -> Dict[str, Any]:
         """Transcribe audio using Speech-to-Text v2 chirp_3 model with diarization."""
         gcs_uri = audio_path_or_gcs_uri
@@ -191,8 +249,6 @@ class PodcastSubtitleEngine:
 
         try:
             logger.info(f"Running STT v2 chirp_3 on {gcs_uri}...")
-            words_data: List[Dict[str, Any]] = []
-            full_transcript_parts: List[str] = []
 
             if self.speech_client:
                 config = cloud_speech.RecognitionConfig(
@@ -223,62 +279,26 @@ class PodcastSubtitleEngine:
                 )
 
                 operation = self.speech_client.batch_recognize(request=request)
-                response = operation.result(timeout=600)
+                if hasattr(operation, "operation") and hasattr(
+                    operation.operation, "name"
+                ):
+                    op_name = operation.operation.name
+                    logger.info("Chirp 3 BatchRecognize LRO: %s", op_name)
+                    if on_operation_started:
+                        on_operation_started(op_name)
 
-                for _, file_res in response.results.items():
-                    err_code = getattr(
-                        getattr(file_res, "error", None), "code", 0
-                    )
-                    if isinstance(err_code, int) and err_code != 0:
-                        raise RuntimeError(
-                            f"Speech-to-Text v2 error ({err_code}): {getattr(file_res.error, 'message', '')}"
+                start_wait = time.time()
+                while not operation.done():
+                    time.sleep(1.5)
+                    if time.time() - start_wait > 600:
+                        raise TimeoutError(
+                            "Speech-to-Text v2 batch operation timed out after 10 minutes."
                         )
-                    if (
-                        not hasattr(file_res, "transcript")
-                        or not file_res.transcript
-                    ):
-                        continue
-                    for result in file_res.transcript.results:
-                        if not result.alternatives:
-                            continue
-                        alt = result.alternatives[0]
-                        full_transcript_parts.append(alt.transcript)
-                        for w in alt.words:
-                            start_sec = (
-                                w.start_offset.total_seconds()
-                                if hasattr(w.start_offset, "total_seconds")
-                                else (
-                                    w.start_offset.seconds
-                                    + w.start_offset.nanos / 1e9
-                                )
-                            )
-                            end_sec = (
-                                w.end_offset.total_seconds()
-                                if hasattr(w.end_offset, "total_seconds")
-                                else (
-                                    w.end_offset.seconds
-                                    + w.end_offset.nanos / 1e9
-                                )
-                            )
-                            speaker_tag = (
-                                str(w.speaker_label)
-                                if hasattr(w, "speaker_label")
-                                and w.speaker_label
-                                else "1"
-                            )
-                            words_data.append(
-                                {
-                                    "word": w.word,
-                                    "start_time": round(start_sec, 3),
-                                    "end_time": round(end_sec, 3),
-                                    "speaker": f"Speaker {speaker_tag}",
-                                }
-                            )
 
-            return {
-                "full_text": " ".join(full_transcript_parts),
-                "words": words_data,
-            }
+                response = operation.result()
+                return self.parse_speech_response(response)
+
+            return {"full_text": "", "words": []}
         finally:
             if temp_wav_path and os.path.exists(temp_wav_path):
                 try:
@@ -549,6 +569,8 @@ Word timing data:
         cmd = [
             "ffmpeg",
             "-y",
+            "-threads",
+            "0",
             "-i",
             video_path,
             "-vf",
@@ -564,9 +586,9 @@ Word timing data:
             "-r",
             "30",
             "-preset",
-            "fast",
+            "veryfast",
             "-crf",
-            "23",
+            "22",
             "-c:a",
             "aac",
             "-b:a",
@@ -637,7 +659,8 @@ Word timing data:
         job_dir: Optional[str] = None,
         generate_burned_in: bool = True,
         language_code: str = "en-US",
-        progress_callback: Optional[Any] = None,
+        progress_callback: Optional[Callable[[str, int], None]] = None,
+        on_operation_started: Optional[Callable[[str], None]] = None,
     ) -> Dict[str, Any]:
         """Runs complete subtitle extraction, refinement, and rendering pipeline."""
         if not job_dir:
@@ -676,6 +699,32 @@ Word timing data:
         if progress_callback:
             progress_callback("extracting", 15)
 
+        if progress_callback:
+            progress_callback("transcribing", 35)
+
+        raw_asr = self.transcribe_chirp3(
+            video_path,
+            language_code=language_code,
+            on_operation_started=on_operation_started,
+        )
+
+        return self.finalize_downstream(
+            raw_asr=raw_asr,
+            video_path=video_path,
+            job_dir=job_dir,
+            generate_burned_in=generate_burned_in,
+            progress_callback=progress_callback,
+        )
+
+    def finalize_downstream(
+        self,
+        raw_asr: Dict[str, Any],
+        video_path: str,
+        job_dir: str,
+        generate_burned_in: bool = True,
+        progress_callback: Optional[Callable[[str, int], None]] = None,
+    ) -> Dict[str, Any]:
+        """Runs Gemini refinement, formatting, subtitle export, and video packaging."""
         vtt_path = os.path.join(job_dir, "subtitles.vtt")
         srt_path = os.path.join(job_dir, "subtitles.srt")
         toggleable_video_path = os.path.join(job_dir, "output_toggleable.mp4")
@@ -683,13 +732,6 @@ Word timing data:
             os.path.join(job_dir, "output_burned_in.mp4")
             if generate_burned_in
             else None
-        )
-
-        if progress_callback:
-            progress_callback("transcribing", 35)
-
-        raw_asr = self.transcribe_chirp3(
-            video_path, language_code=language_code
         )
 
         if progress_callback:
@@ -932,9 +974,109 @@ class SubtitleService:
         self._save_job_state(job_id, dto)
         return job_id
 
+    def _finish_job_from_asr(
+        self, job_id: str, job: SubtitleResponseDTO, raw_asr: Dict[str, Any]
+    ) -> SubtitleResponseDTO:
+        """Finishes downstream pipeline when LRO completes across instances."""
+        try:
+            job_dir = job.local_output_dir or self.resolve_output_dir(
+                job_id=job_id
+            )
+            os.makedirs(job_dir, exist_ok=True)
+
+            video_path = job.source_video_path or ""
+            if not video_path or not os.path.exists(video_path):
+                video_path = (
+                    self.get_artifact_file(job_id, "source_video") or video_path
+                )
+
+            def update_progress(step: str, prog: int) -> None:
+                job.step = step
+                job.progress = prog
+                self._save_job_state(job_id, job)
+
+            result = self.engine.finalize_downstream(
+                raw_asr=raw_asr,
+                video_path=video_path,
+                job_dir=job_dir,
+                generate_burned_in=bool(job.burn_subtitles),
+                progress_callback=update_progress,
+            )
+
+            job.status = "completed"
+            job.step = "completed"
+            job.progress = 100
+            job.subtitles_vtt = result.get("subtitles_vtt")
+            job.subtitles_srt = result.get("subtitles_srt")
+            job.default_toggleable_video = result.get(
+                "default_toggleable_video"
+            )
+            job.burned_in_video = result.get("burned_in_video")
+            job.segment_count = result.get("segment_count", 0)
+            job.transcript_text = result.get("transcript_text", "")
+            job.local_output_dir = os.path.abspath(job_dir)
+            job.subtitle_url = result.get("subtitles_vtt")
+            job.processed_video_url = (
+                result.get("burned_in_video")
+                if job.burn_subtitles
+                else result.get("default_toggleable_video")
+            )
+
+            # Persist output files to GCS
+            self._upload_artifact_to_gcs(job_id, job.subtitles_vtt)
+            self._upload_artifact_to_gcs(job_id, job.subtitles_srt)
+            self._upload_artifact_to_gcs(job_id, job.default_toggleable_video)
+            self._upload_artifact_to_gcs(job_id, job.burned_in_video)
+
+        except Exception as e:
+            logger.error(
+                "Failed to finalize job %s from ASR: %s",
+                job_id,
+                e,
+                exc_info=True,
+            )
+            job.status = "failed"
+            job.step = "failed"
+            job.error_message = str(e)
+
+        self._save_job_state(job_id, job)
+        return job
+
     def get_job_status(self, job_id: str) -> Optional[SubtitleResponseDTO]:
-        """Retrieve job status DTO."""
-        return self._load_job_state(job_id)
+        """Retrieve job status DTO, checking active LRO if transcribing."""
+        job = self._load_job_state(job_id)
+        if not job:
+            return None
+
+        # Check if active Speech-to-Text LRO has finished on GCP
+        if (
+            job.status == "processing"
+            and job.step == "transcribing"
+            and job.operation_name
+        ):
+            if self.engine.speech_client and getattr(
+                self.engine.speech_client, "operations_client", None
+            ):
+                try:
+                    op_proto = self.engine.speech_client.operations_client.get_operation(
+                        name=job.operation_name
+                    )
+                    if op_proto.done:
+                        if op_proto.HasField("error"):
+                            job.status = "failed"
+                            job.step = "failed"
+                            job.error_message = f"Speech-to-Text v2 error: {op_proto.error.message}"
+                            self._save_job_state(job_id, job)
+                            return job
+
+                        resp = cloud_speech.BatchRecognizeResponse()
+                        op_proto.response.Unpack(resp)
+                        raw_asr = self.engine.parse_speech_response(resp)
+                        return self._finish_job_from_asr(job_id, job, raw_asr)
+                except Exception as e:
+                    logger.debug("LRO check for %s skipped: %s", job_id, e)
+
+        return job
 
     def resolve_output_dir(
         self, package_name: Optional[str] = None, job_id: str = ""
@@ -1172,6 +1314,9 @@ class SubtitleService:
         job.status = "processing"
         job.step = "extracting"
         job.progress = 10
+        job.source_video_path = video_path
+        job.burn_subtitles = burn_subtitles
+        job.language_code = language_code
         self._save_job_state(job_id, job)
 
         if not job_dir:
@@ -1184,6 +1329,12 @@ class SubtitleService:
             job.progress = prog
             self._save_job_state(job_id, job)
 
+        def on_op_started(op_name: str) -> None:
+            job.operation_name = op_name
+            job.step = "transcribing"
+            job.progress = 35
+            self._save_job_state(job_id, job)
+
         try:
             result = self.engine.process_video(
                 video_path=video_path,
@@ -1191,6 +1342,7 @@ class SubtitleService:
                 generate_burned_in=burn_subtitles,
                 language_code=language_code,
                 progress_callback=update_progress,
+                on_operation_started=on_op_started,
             )
 
             job.status = "completed"

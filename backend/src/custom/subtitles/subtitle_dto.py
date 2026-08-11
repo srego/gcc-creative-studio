@@ -102,6 +102,22 @@ class SubtitleResponseDTO(BaseModel):
         default=0,
         description="Estimated completion percentage (0-100).",
     )
+    operation_name: Optional[str] = Field(
+        default=None,
+        description="GCP Speech-to-Text LRO operation resource name.",
+    )
+    source_video_path: Optional[str] = Field(
+        default=None,
+        description="Path or URI to source video being processed.",
+    )
+    burn_subtitles: Optional[bool] = Field(
+        default=False,
+        description="Whether burned-in video was requested for this job.",
+    )
+    language_code: Optional[str] = Field(
+        default="en-US",
+        description="Language code used for transcription.",
+    )
 
 
 class SubtitleUploadUrlRequestDTO(BaseModel):
