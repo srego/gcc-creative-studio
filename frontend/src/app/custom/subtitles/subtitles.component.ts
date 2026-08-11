@@ -307,7 +307,9 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
             url = String(result['gcs_uri'] || '');
           } else if ('mediaItem' in result && result['mediaItem']) {
             const item = result['mediaItem'] as Record<string, unknown>;
-            title = String(item['title'] || item['filename'] || 'Gallery Video');
+            title = String(
+              item['title'] || item['filename'] || 'Gallery Video',
+            );
             url = String(item['gcs_uri'] || item['url'] || '');
           } else if (typeof result === 'object' && result['title']) {
             title = String(result['title']);
