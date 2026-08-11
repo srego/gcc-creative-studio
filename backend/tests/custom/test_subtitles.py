@@ -1326,9 +1326,14 @@ def test_get_job_status_lro_completion():
             "_upload_artifact_to_gcs",
             return_value="gs://bucket/out.mp4",
         ),
-    ):
         res = service.get_job_status(job_id)
         assert res is not None
+        for _ in range(50):
+            if res.status == "completed":
+                break
+            time.sleep(0.02)
+            res = service.get_job_status(job_id)
+
         assert res.status == "completed"
         assert res.progress == 100
         assert res.subtitles_vtt == "/tmp/subtitles.vtt"

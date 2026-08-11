@@ -22,10 +22,11 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 import uuid
 import zipfile
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from fastapi import HTTPException, status
 from google import genai
@@ -583,26 +584,18 @@ Word timing data:
             "4.0",
             "-pix_fmt",
             "yuv420p",
-            "-r",
-            "30",
             "-preset",
-            "veryfast",
+            "ultrafast",
             "-crf",
-            "22",
+            "23",
             "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-ar",
-            "44100",
-            "-ac",
-            "2",
+            "copy",
             "-movflags",
             "+faststart",
             temp_output_path,
         ]
 
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if res.returncode != 0:
             if os.path.exists(temp_output_path):
                 os.remove(temp_output_path)
@@ -867,6 +860,7 @@ class SubtitleService:
     def __init__(self) -> None:
         self.engine = PodcastSubtitleEngine()
         self.jobs: Dict[str, SubtitleResponseDTO] = {}
+        self._active_finishing_jobs: Set[str] = set()
 
     def _save_job_state(
         self, job_id: str, job_dto: SubtitleResponseDTO
@@ -1058,6 +1052,26 @@ class SubtitleService:
         self._save_job_state(job_id, job)
         return job
 
+    def _run_async_finish(
+        self, job_id: str, job: SubtitleResponseDTO, raw_asr: Dict[str, Any]
+    ) -> None:
+        """Executes downstream formatting, burning, and packaging in a background thread."""
+        try:
+            self._finish_job_from_asr(job_id, job, raw_asr)
+        except Exception as e:
+            logger.error(
+                "Background finish failed for job %s: %s",
+                job_id,
+                e,
+                exc_info=True,
+            )
+            job.status = "failed"
+            job.step = "failed"
+            job.error_message = str(e)
+            self._save_job_state(job_id, job)
+        finally:
+            self._active_finishing_jobs.discard(job_id)
+
     def get_job_status(self, job_id: str) -> Optional[SubtitleResponseDTO]:
         """Retrieve job status DTO, checking active LRO if transcribing."""
         job = self._load_job_state(job_id)
@@ -1088,9 +1102,48 @@ class SubtitleService:
                         resp = cloud_speech.BatchRecognizeResponse()
                         op_proto.response.Unpack(resp)
                         raw_asr = self.engine.parse_speech_response(resp)
-                        return self._finish_job_from_asr(job_id, job, raw_asr)
+
+                        if job_id not in self._active_finishing_jobs:
+                            self._active_finishing_jobs.add(job_id)
+                            job.step = "formatting"
+                            job.progress = 65
+                            self._save_job_state(job_id, job)
+                            thread = threading.Thread(
+                                target=self._run_async_finish,
+                                args=(job_id, job, raw_asr),
+                                daemon=True,
+                            )
+                            thread.start()
                 except Exception as e:
                     logger.debug("LRO check for %s skipped: %s", job_id, e)
+
+        # Recovery for jobs that were interrupted or timed out at formatting/packaging
+        elif (
+            job.status == "processing"
+            and job.step in ("formatting", "packaging")
+            and job.operation_name
+            and job_id not in self._active_finishing_jobs
+        ):
+            if self.engine.speech_client and getattr(
+                self.engine.speech_client, "operations_client", None
+            ):
+                try:
+                    op_proto = self.engine.speech_client.operations_client.get_operation(
+                        name=job.operation_name
+                    )
+                    if op_proto.done and not op_proto.HasField("error"):
+                        resp = cloud_speech.BatchRecognizeResponse()
+                        op_proto.response.Unpack(resp)
+                        raw_asr = self.engine.parse_speech_response(resp)
+                        self._active_finishing_jobs.add(job_id)
+                        thread = threading.Thread(
+                            target=self._run_async_finish,
+                            args=(job_id, job, raw_asr),
+                            daemon=True,
+                        )
+                        thread.start()
+                except Exception as e:
+                    logger.debug("Recovery check for %s skipped: %s", job_id, e)
 
         return job
 
