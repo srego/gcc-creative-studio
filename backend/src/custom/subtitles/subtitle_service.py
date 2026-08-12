@@ -1031,12 +1031,29 @@ class SubtitleService:
                 else result.get("default_toggleable_video")
             )
 
-            # Persist output files to GCS
-            self._upload_artifact_to_gcs(job_id, job.subtitles_vtt)
-            self._upload_artifact_to_gcs(job_id, job.subtitles_srt)
-            self._upload_artifact_to_gcs(job_id, job.default_toggleable_video)
-            self._upload_artifact_to_gcs(job_id, job.burned_in_video)
+            # Persist output files to GCS and record GCS URIs
+            vtt_gcs = self._upload_artifact_to_gcs(job_id, job.subtitles_vtt)
+            srt_gcs = self._upload_artifact_to_gcs(job_id, job.subtitles_srt)
+            toggle_gcs = self._upload_artifact_to_gcs(
+                job_id, job.default_toggleable_video
+            )
+            burned_gcs = self._upload_artifact_to_gcs(
+                job_id, job.burned_in_video
+            )
             self._upload_artifact_to_gcs(job_id, result.get("thumbnail_jpg"))
+
+            if burned_gcs and job.burn_subtitles:
+                job.processed_video_url = burned_gcs
+                job.burned_in_video = burned_gcs
+            elif toggle_gcs:
+                job.processed_video_url = toggle_gcs
+                job.default_toggleable_video = toggle_gcs
+
+            if vtt_gcs:
+                job.subtitle_url = vtt_gcs
+                job.subtitles_vtt = vtt_gcs
+            if srt_gcs:
+                job.subtitles_srt = srt_gcs
 
         except Exception as e:
             logger.error(
@@ -1141,9 +1158,26 @@ class SubtitleService:
                             args=(job_id, job, raw_asr),
                             daemon=True,
                         )
-                        thread.start()
                 except Exception as e:
                     logger.debug("Recovery check for %s skipped: %s", job_id, e)
+
+        if job.status == "completed":
+            target_video_type = (
+                "burned_in_video" if job.burn_subtitles else "toggleable_video"
+            )
+            signed_video = self.get_artifact_signed_url(
+                job_id, target_video_type
+            )
+            if signed_video:
+                job.processed_video_url = signed_video
+                if job.burn_subtitles:
+                    job.burned_in_video = signed_video
+                else:
+                    job.default_toggleable_video = signed_video
+            signed_vtt = self.get_artifact_signed_url(job_id, "vtt")
+            if signed_vtt:
+                job.subtitle_url = signed_vtt
+                job.subtitles_vtt = signed_vtt
 
         return job
 
@@ -1293,6 +1327,168 @@ class SubtitleService:
             logger.debug(f"Failed to upload artifact {local_path} to GCS: {e}")
             return None
 
+    def get_artifact_gcs_uri(
+        self, job_id: str, file_type: str
+    ) -> Optional[str]:
+        """Resolves canonical Google Cloud Storage URI (gs://...) for any job artifact."""
+        status_dto = self.get_job_status(job_id)
+        if not status_dto:
+            return None
+
+        bucket_name = (
+            getattr(config_service, "GENMEDIA_BUCKET", None)
+            or os.getenv("GENMEDIA_BUCKET")
+            or self.engine.gcs_bucket_name
+        )
+
+        # 1. Direct check on status DTO attributes if storing gs://
+        if file_type in ("burned_in_video", "burned"):
+            if status_dto.burned_in_video and status_dto.burned_in_video.startswith("gs://"):
+                return status_dto.burned_in_video
+            if status_dto.processed_video_url and status_dto.processed_video_url.startswith("gs://"):
+                return status_dto.processed_video_url
+        elif file_type in ("toggleable_video", "toggleable"):
+            if status_dto.default_toggleable_video and status_dto.default_toggleable_video.startswith("gs://"):
+                return status_dto.default_toggleable_video
+        elif file_type in ("source_video", "source"):
+            if status_dto.source_video_path and status_dto.source_video_path.startswith("gs://"):
+                return status_dto.source_video_path
+        elif file_type == "vtt":
+            if status_dto.subtitles_vtt and status_dto.subtitles_vtt.startswith("gs://"):
+                return status_dto.subtitles_vtt
+            if status_dto.subtitle_url and status_dto.subtitle_url.startswith("gs://"):
+                return status_dto.subtitle_url
+        elif file_type == "srt":
+            if status_dto.subtitles_srt and status_dto.subtitles_srt.startswith("gs://"):
+                return status_dto.subtitles_srt
+
+        # 2. Check storage bucket listing
+        try:
+            if self.engine.storage_client:
+                bucket = self.engine.storage_client.bucket(bucket_name)
+                blobs = list(
+                    bucket.list_blobs(prefix=f"subtitles_outputs/{job_id}/")
+                )
+                if not blobs:
+                    blobs = list(
+                        bucket.list_blobs(
+                            prefix=f"subtitles_packages/{job_id}/"
+                        )
+                    )
+
+                for blob in blobs:
+                    filename = os.path.basename(blob.name)
+                    matched = False
+                    if file_type == "vtt" and filename.endswith(".vtt"):
+                        matched = True
+                    elif file_type == "srt" and filename.endswith(".srt"):
+                        matched = True
+                    elif (
+                        file_type in ("burned_in_video", "burned")
+                        and (
+                            "burned" in filename
+                            or "subtitled" in filename
+                            or filename == "output_burned_in.mp4"
+                        )
+                        and filename.endswith(".mp4")
+                    ):
+                        matched = True
+                    elif (
+                        file_type in ("toggleable_video", "toggleable")
+                        and (
+                            "toggleable" in filename
+                            or "default" in filename
+                            or filename == "output_toggleable.mp4"
+                        )
+                        and filename.endswith(".mp4")
+                    ):
+                        matched = True
+                    elif (
+                        file_type in ("source_video", "source")
+                        and (
+                            "source" in filename
+                            or filename == "source_video.mp4"
+                        )
+                        and filename.endswith(".mp4")
+                    ):
+                        matched = True
+                    elif file_type in ("thumbnail", "thumbnail_jpg") and (
+                        filename.endswith(".jpg") or filename.endswith(".png")
+                    ):
+                        matched = True
+                    elif file_type in ("zip", "package") and filename.endswith(
+                        ".zip"
+                    ):
+                        matched = True
+
+                    if matched:
+                        return f"gs://{bucket_name}/{blob.name}"
+        except Exception as e:
+            logger.debug("Error querying GCS for %s artifact %s: %s", job_id, file_type, e)
+
+        # 3. Predict standard GCS path
+        if file_type in ("burned_in_video", "burned"):
+            return f"gs://{bucket_name}/subtitles_outputs/{job_id}/output_burned_in.mp4"
+        elif file_type in ("toggleable_video", "toggleable"):
+            return f"gs://{bucket_name}/subtitles_outputs/{job_id}/output_toggleable.mp4"
+        elif file_type in ("source_video", "source"):
+            return f"gs://{bucket_name}/subtitles_outputs/{job_id}/source_video.mp4"
+        elif file_type == "vtt":
+            return f"gs://{bucket_name}/subtitles_outputs/{job_id}/subtitles.vtt"
+        elif file_type == "srt":
+            return f"gs://{bucket_name}/subtitles_outputs/{job_id}/subtitles.srt"
+
+        return None
+
+    def get_artifact_signed_url(
+        self,
+        job_id: str,
+        file_type: str,
+        for_download: bool = False,
+        filename: Optional[str] = None,
+        expiration_hours: int = 4,
+    ) -> Optional[str]:
+        """Generates a V4 Presigned URL for high-speed streaming or direct downloading from GCS."""
+        gcs_uri = self.get_artifact_gcs_uri(job_id, file_type)
+        if not gcs_uri or not gcs_uri.startswith("gs://"):
+            return None
+
+        try:
+            from src.auth.iam_signer_credentials_service import (
+                IamSignerCredentials,
+            )
+
+            signer = IamSignerCredentials()
+            signed_url = signer.generate_presigned_url(
+                gcs_uri, expiration_hours=expiration_hours
+            )
+            if signed_url and signed_url.startswith("http"):
+                return signed_url
+        except Exception as e:
+            logger.debug(
+                "IamSignerCredentials presigned URL generation failed: %s", e
+            )
+
+        # Fallback to direct blob.generate_signed_url via storage_client if credentials present
+        try:
+            if self.engine.storage_client:
+                bucket_name, blob_name = gcs_uri.replace("gs://", "").split(
+                    "/", 1
+                )
+                bucket = self.engine.storage_client.bucket(bucket_name)
+                blob = bucket.blob(blob_name)
+                return blob.generate_signed_url(
+                    version="v4",
+                    expiration=datetime.timedelta(hours=expiration_hours),
+                    method="GET",
+                )
+        except Exception as e:
+            logger.debug(
+                "Direct storage client signed URL fallback failed: %s", e
+            )
+
+        return None
+
     def get_artifact_file(self, job_id: str, file_type: str) -> Optional[str]:
         """Resolves local path for an artifact, downloading from GCS if on another instance."""
         status_dto = self.get_job_status(job_id)
@@ -1340,13 +1536,13 @@ class SubtitleService:
                     matched = True
                 elif (
                     file_type in ("burned_in_video", "burned")
-                    and ("burned" in filename or "subtitled" in filename)
+                    and ("burned" in filename or "subtitled" in filename or filename == "output_burned_in.mp4")
                     and filename.endswith(".mp4")
                 ):
                     matched = True
                 elif (
                     file_type in ("toggleable_video", "toggleable")
-                    and ("toggleable" in filename or "default" in filename)
+                    and ("toggleable" in filename or "default" in filename or filename == "output_toggleable.mp4")
                     and filename.endswith(".mp4")
                 ):
                     matched = True
@@ -1620,14 +1816,16 @@ class SubtitleService:
         saved_filenames: list[str] = []
 
         # (a) WebVTT Captions
-        vtt_local = self.get_artifact_file(job_id, "vtt")
-        vtt_gcs = (
-            self._upload_artifact_to_gcs(job_id, vtt_local)
-            if vtt_local
-            else None
-        )
+        vtt_gcs = self.get_artifact_gcs_uri(job_id, "vtt")
         if not vtt_gcs:
-            vtt_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_packages/{package_name}/{package_name}.vtt"
+            vtt_local = self.get_artifact_file(job_id, "vtt")
+            vtt_gcs = (
+                self._upload_artifact_to_gcs(job_id, vtt_local)
+                if vtt_local
+                else None
+            )
+        if not vtt_gcs:
+            vtt_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_outputs/{job_id}/subtitles.vtt"
         attached_deliverables.append(
             {
                 "name": f"{package_name}.vtt",
@@ -1639,14 +1837,16 @@ class SubtitleService:
         saved_filenames.append(f"{package_name}.vtt")
 
         # (b) SubRip SRT Captions
-        srt_local = self.get_artifact_file(job_id, "srt")
-        srt_gcs = (
-            self._upload_artifact_to_gcs(job_id, srt_local)
-            if srt_local
-            else None
-        )
+        srt_gcs = self.get_artifact_gcs_uri(job_id, "srt")
         if not srt_gcs:
-            srt_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_packages/{package_name}/{package_name}.srt"
+            srt_local = self.get_artifact_file(job_id, "srt")
+            srt_gcs = (
+                self._upload_artifact_to_gcs(job_id, srt_local)
+                if srt_local
+                else None
+            )
+        if not srt_gcs:
+            srt_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_outputs/{job_id}/subtitles.srt"
         attached_deliverables.append(
             {
                 "name": f"{package_name}.srt",
@@ -1660,11 +1860,13 @@ class SubtitleService:
         # (c) Burned-In Video if generated
         burned_gcs = None
         if job.burned_in_video:
-            burned_local = self.get_artifact_file(job_id, "burned_in_video")
-            if burned_local:
-                burned_gcs = self._upload_artifact_to_gcs(job_id, burned_local)
+            burned_gcs = self.get_artifact_gcs_uri(job_id, "burned_in_video")
             if not burned_gcs:
-                burned_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_packages/{package_name}/{package_name} (Burned).mp4"
+                burned_local = self.get_artifact_file(job_id, "burned_in_video")
+                if burned_local:
+                    burned_gcs = self._upload_artifact_to_gcs(job_id, burned_local)
+            if not burned_gcs:
+                burned_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_outputs/{job_id}/output_burned_in.mp4"
             attached_deliverables.append(
                 {
                     "name": f"{package_name} (Burned).mp4",
@@ -1676,31 +1878,39 @@ class SubtitleService:
             saved_filenames.append(f"{package_name} (Burned).mp4")
 
         # (d) Source Video
-        source_video_path = None
-        if (
-            hasattr(job, "local_output_dir")
-            and job.local_output_dir
-            and os.path.exists(job.local_output_dir)
-            and os.path.isdir(job.local_output_dir)
-        ):
-            try:
-                for f in os.listdir(job.local_output_dir):
-                    if (
-                        f.endswith(".mp4")
-                        and "burned" not in f
-                        and "toggleable" not in f
-                    ):
-                        source_video_path = os.path.join(
-                            job.local_output_dir, f
-                        )
-                        break
-            except Exception as e:
-                logger.debug(f"Error discovering source video: {e}")
         source_gcs = None
-        if source_video_path and os.path.exists(source_video_path):
-            source_gcs = self._upload_artifact_to_gcs(job_id, source_video_path)
+        if job.source_video_path and job.source_video_path.startswith("gs://"):
+            source_gcs = job.source_video_path
+        else:
+            source_gcs = self.get_artifact_gcs_uri(job_id, "source_video")
+
         if not source_gcs:
-            source_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_packages/{package_name}/{package_name} (Source).mp4"
+            source_video_path = None
+            if (
+                hasattr(job, "local_output_dir")
+                and job.local_output_dir
+                and os.path.exists(job.local_output_dir)
+                and os.path.isdir(job.local_output_dir)
+            ):
+                try:
+                    for f in os.listdir(job.local_output_dir):
+                        if (
+                            f.endswith(".mp4")
+                            and "burned" not in f
+                            and "toggleable" not in f
+                        ):
+                            source_video_path = os.path.join(
+                                job.local_output_dir, f
+                            )
+                            break
+                except Exception as e:
+                    logger.debug(f"Error discovering source video: {e}")
+            if source_video_path and os.path.exists(source_video_path):
+                source_gcs = self._upload_artifact_to_gcs(job_id, source_video_path)
+
+        if not source_gcs:
+            source_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_outputs/{job_id}/source_video.mp4"
+
         attached_deliverables.append(
             {
                 "name": f"{package_name} (Source).mp4",
@@ -1717,7 +1927,7 @@ class SubtitleService:
             self._upload_artifact_to_gcs(job_id, zip_path) if zip_path else None
         )
         if not zip_gcs:
-            zip_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_packages/{package_name}/{package_name}_package.zip"
+            zip_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_outputs/{job_id}/subtitles_{job_id[:8]}_package.zip"
         attached_deliverables.append(
             {
                 "name": f"{package_name}_package.zip",
@@ -1730,44 +1940,45 @@ class SubtitleService:
 
         # 3. Resolve primary video and generate thumbnail for the MediaItem card
         primary_video_gcs = burned_gcs or source_gcs
-        thumbnail_gcs = None
-
-        local_thumb = os.path.join(
-            f"/tmp/subtitles_outputs/{job_id}", "thumbnail.jpg"
-        )
-        video_for_thumb = (
-            self.get_artifact_file(job_id, "burned_in_video")
-            or self.get_artifact_file(job_id, "toggleable_video")
-            or source_video_path
-        )
-        thumb_exists = False
-        try:
-            if (
-                os.path.exists(local_thumb)
-                and os.path.isfile(local_thumb)
-                and os.path.getsize(local_thumb) > 0
-            ):
-                thumb_exists = True
-        except Exception:
-            thumb_exists = False
-
-        if not thumb_exists and video_for_thumb:
-            self.engine.generate_thumbnail(video_for_thumb, local_thumb)
-
-        try:
-            if (
-                os.path.exists(local_thumb)
-                and os.path.isfile(local_thumb)
-                and os.path.getsize(local_thumb) > 0
-            ):
-                thumbnail_gcs = self._upload_artifact_to_gcs(
-                    job_id, local_thumb
-                )
-        except Exception:
-            thumbnail_gcs = None
+        thumbnail_gcs = self.get_artifact_gcs_uri(job_id, "thumbnail")
 
         if not thumbnail_gcs:
-            thumbnail_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_packages/{package_name}/thumbnail.jpg"
+            local_thumb = os.path.join(
+                f"/tmp/subtitles_outputs/{job_id}", "thumbnail.jpg"
+            )
+            video_for_thumb = (
+                self.get_artifact_file(job_id, "burned_in_video")
+                or self.get_artifact_file(job_id, "toggleable_video")
+                or (job.source_video_path if job.source_video_path and not job.source_video_path.startswith("gs://") else None)
+            )
+            thumb_exists = False
+            try:
+                if (
+                    os.path.exists(local_thumb)
+                    and os.path.isfile(local_thumb)
+                    and os.path.getsize(local_thumb) > 0
+                ):
+                    thumb_exists = True
+            except Exception:
+                thumb_exists = False
+
+            if not thumb_exists and video_for_thumb:
+                self.engine.generate_thumbnail(video_for_thumb, local_thumb)
+
+            try:
+                if (
+                    os.path.exists(local_thumb)
+                    and os.path.isfile(local_thumb)
+                    and os.path.getsize(local_thumb) > 0
+                ):
+                    thumbnail_gcs = self._upload_artifact_to_gcs(
+                        job_id, local_thumb
+                    )
+            except Exception:
+                thumbnail_gcs = None
+
+        if not thumbnail_gcs:
+            thumbnail_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_outputs/{job_id}/thumbnail.jpg"
 
         # 4. Assemble video URIs (burned-in video primary, source video secondary)
         video_gcs_list = []

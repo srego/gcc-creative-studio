@@ -567,17 +567,19 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
         res.burned_in_video || this.enableBurnedInVideo()
           ? 'burned_in_video'
           : 'toggleable_video';
-      const streamUrl = this.subtitlesService.getDownloadUrl(
-        res.job_id,
-        videoFileType,
-      );
+      const streamUrl =
+        res.processed_video_url && res.processed_video_url.startsWith('http')
+          ? res.processed_video_url
+          : this.subtitlesService.getDownloadUrl(res.job_id, videoFileType);
       this.subtitledVideoPreviewUrl.set(streamUrl);
       this.previewVideoUrl.set(streamUrl);
 
       if (!this.sourceVideoPreviewUrl()) {
-        this.sourceVideoPreviewUrl.set(
-          this.subtitlesService.getDownloadUrl(res.job_id, 'source_video'),
-        );
+        const sourceUrl =
+          res.source_video_path && res.source_video_path.startsWith('http')
+            ? res.source_video_path
+            : this.subtitlesService.getDownloadUrl(res.job_id, 'source_video');
+        this.sourceVideoPreviewUrl.set(sourceUrl);
       }
     }
   }

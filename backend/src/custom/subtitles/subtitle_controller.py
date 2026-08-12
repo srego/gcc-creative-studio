@@ -27,7 +27,7 @@ from fastapi import (
     Request,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.auth_guard import RoleChecker, get_current_user
@@ -265,7 +265,7 @@ def get_job_status(job_id: str) -> SubtitleResponseDTO:
 def download_output_file(
     job_id: str,
     file_type: str = "vtt",
-) -> FileResponse:
+) -> Response:
     """Streams or downloads the specified generated artifact for a job."""
     try:
         status_dto = subtitle_service.get_job_status(job_id)
@@ -276,6 +276,15 @@ def download_output_file(
             )
 
         if file_type in ("zip", "all"):
+            signed_zip = subtitle_service.get_artifact_signed_url(
+                job_id, "zip", for_download=True
+            )
+            if signed_zip:
+                return RedirectResponse(
+                    url=signed_zip,
+                    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+                )
+
             zip_file = subtitle_service.create_job_zip_package(job_id)
             if not zip_file or not os.path.exists(zip_file):
                 raise HTTPException(
@@ -292,6 +301,17 @@ def download_output_file(
                 },
             )
 
+        # 1. Try V4 Presigned URL directly from Cloud Storage (Range requests, high-speed streaming)
+        signed_url = subtitle_service.get_artifact_signed_url(
+            job_id, file_type, for_download=True
+        )
+        if signed_url:
+            return RedirectResponse(
+                url=signed_url,
+                status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+            )
+
+        # 2. Local fallback for local development and test suites
         file_path = None
         media_type = "text/vtt"
 
@@ -306,6 +326,9 @@ def download_output_file(
             media_type = "video/mp4"
         elif file_type == "toggleable_video":
             file_path = status_dto.default_toggleable_video
+            media_type = "video/mp4"
+        elif file_type == "source_video":
+            file_path = status_dto.source_video_path
             media_type = "video/mp4"
 
         if not file_path or not os.path.exists(file_path):

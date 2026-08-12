@@ -1484,7 +1484,6 @@ def test_run_async_finish_error_handling():
     service = SubtitleService()
     job_id = service.create_job()
     job = service.get_job_status(job_id)
-
     with patch.object(
         service,
         "_finish_job_from_asr",
@@ -1494,3 +1493,42 @@ def test_run_async_finish_error_handling():
         assert job.status == "failed"
         assert "FFmpeg crashed" in (job.error_message or "")
         assert job_id not in service._active_finishing_jobs
+
+
+def test_get_artifact_gcs_uri_and_signed_url():
+    """Tests resolving GCS URI and signed URL for job artifacts."""
+    service = SubtitleService()
+    job_id = service.create_job()
+    job = service.get_job_status(job_id)
+    job.burned_in_video = "gs://bucket/subtitles_outputs/sub123/output_burned_in.mp4"
+    job.source_video_path = "gs://bucket/subtitles_outputs/sub123/source_video.mp4"
+    job.subtitles_vtt = "gs://bucket/subtitles_outputs/sub123/subtitles.vtt"
+    service._save_job_state(job_id, job)
+
+    assert service.get_artifact_gcs_uri(job_id, "burned_in_video") == job.burned_in_video
+    assert service.get_artifact_gcs_uri(job_id, "source_video") == job.source_video_path
+    assert service.get_artifact_gcs_uri(job_id, "vtt") == job.subtitles_vtt
+
+    with patch("src.auth.iam_signer_credentials_service.IamSignerCredentials.generate_presigned_url", return_value="https://storage.googleapis.com/signed/sub.mp4"):
+        signed = service.get_artifact_signed_url(job_id, "burned_in_video")
+        assert signed == "https://storage.googleapis.com/signed/sub.mp4"
+
+
+def test_controller_download_redirect_to_signed_url(api_client):
+    """Tests GET /download/{job_id} returns 307 Temporary Redirect when presigned URL is available."""
+    dto = SubtitleResponseDTO(
+        job_id="sub_redirect_123",
+        status="completed",
+        burned_in_video="gs://bucket/subtitles_outputs/sub_redirect_123/output_burned_in.mp4",
+    )
+    with (
+        patch("src.custom.subtitles.subtitle_controller.subtitle_service.get_job_status", return_value=dto),
+        patch("src.custom.subtitles.subtitle_controller.subtitle_service.get_artifact_signed_url", return_value="https://storage.googleapis.com/signed_video.mp4"),
+    ):
+        res = api_client.get(
+            "/api/v1/custom/subtitles/download/sub_redirect_123?file_type=burned_in_video",
+            follow_redirects=False,
+        )
+        assert res.status_code == 307
+        assert res.headers["location"] == "https://storage.googleapis.com/signed_video.mp4"
+
