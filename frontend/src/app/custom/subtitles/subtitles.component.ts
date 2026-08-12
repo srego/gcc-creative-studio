@@ -590,6 +590,40 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     this.errorMessage.set(errorMsg);
   }
 
+  onBurnedVideoError(event: Event): void {
+    console.warn(
+      'Burned video stream playback error, switching to direct download stream',
+      event,
+    );
+    const jid = this.activeJobId();
+    if (jid) {
+      const fallbackUrl = this.subtitlesService.getDownloadUrl(
+        jid,
+        'burned_in_video',
+      );
+      if (this.subtitledVideoPreviewUrl() !== fallbackUrl) {
+        this.subtitledVideoPreviewUrl.set(fallbackUrl);
+      }
+    }
+  }
+
+  onSourceVideoError(event: Event): void {
+    console.warn(
+      'Source video stream playback error, switching to direct download stream',
+      event,
+    );
+    const jid = this.activeJobId();
+    if (jid) {
+      const fallbackUrl = this.subtitlesService.getDownloadUrl(
+        jid,
+        'source_video',
+      );
+      if (this.sourceVideoPreviewUrl() !== fallbackUrl) {
+        this.sourceVideoPreviewUrl.set(fallbackUrl);
+      }
+    }
+  }
+
   readonly isSavingToGallery = signal<boolean>(false);
   readonly savedAssetId = signal<number | null>(null);
   readonly savedItemsCount = signal<number>(0);

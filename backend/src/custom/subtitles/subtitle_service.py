@@ -1316,7 +1316,25 @@ class SubtitleService:
             filename = target_filename or os.path.basename(local_path)
             blob_name = f"subtitles_outputs/{job_id}/{filename}"
             blob = bucket.blob(blob_name)
-            blob.upload_from_filename(local_path)
+
+            if filename.endswith(".mp4"):
+                content_type = "video/mp4"
+            elif filename.endswith(".vtt"):
+                content_type = "text/vtt"
+            elif filename.endswith(".srt"):
+                content_type = "application/x-subrip"
+            elif filename.endswith(".jpg") or filename.endswith(".jpeg"):
+                content_type = "image/jpeg"
+            elif filename.endswith(".png"):
+                content_type = "image/png"
+            elif filename.endswith(".zip"):
+                content_type = "application/zip"
+            elif filename.endswith(".json"):
+                content_type = "application/json"
+            else:
+                content_type = "application/octet-stream"
+
+            blob.upload_from_filename(local_path, content_type=content_type)
             return f"gs://{bucket_name}/{blob_name}"
         except Exception as e:
             logger.debug(f"Failed to upload artifact {local_path} to GCS: {e}")
