@@ -145,7 +145,10 @@ async def generate_subtitles(
                 detail=f"Invalid JSON request body: {str(e)}",
             ) from e
 
-    elif "multipart/form-data" in content_type:
+    elif (
+        "multipart/form-data" in content_type
+        or "application/x-www-form-urlencoded" in content_type
+    ):
         form = await request.form()
         pkg_name = (
             str(form.get("package_name")) if form.get("package_name") else None

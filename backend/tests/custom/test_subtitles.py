@@ -1560,7 +1560,9 @@ def test_get_artifact_signed_url_blob_fallback():
     service = SubtitleService()
     job_id = service.create_job()
     job = service.get_job_status(job_id)
-    job.burned_in_video = "gs://test_bucket/subtitles_outputs/sub123/output_burned_in.mp4"
+    job.burned_in_video = (
+        "gs://test_bucket/subtitles_outputs/sub123/output_burned_in.mp4"
+    )
     service._save_job_state(job_id, job)
 
     mock_storage = MagicMock()
@@ -1569,9 +1571,14 @@ def test_get_artifact_signed_url_blob_fallback():
     mock_storage.bucket.return_value = mock_bucket
     mock_blob = MagicMock()
     mock_bucket.blob.return_value = mock_blob
-    mock_blob.generate_signed_url.return_value = "https://storage.googleapis.com/blob_signed.mp4"
+    mock_blob.generate_signed_url.return_value = (
+        "https://storage.googleapis.com/blob_signed.mp4"
+    )
 
-    with patch("src.auth.iam_signer_credentials_service.IamSignerCredentials.generate_presigned_url", side_effect=RuntimeError("IAM signing unavailable")):
+    with patch(
+        "src.auth.iam_signer_credentials_service.IamSignerCredentials.generate_presigned_url",
+        side_effect=RuntimeError("IAM signing unavailable"),
+    ):
         signed = service.get_artifact_signed_url(job_id, "burned_in_video")
         assert signed == "https://storage.googleapis.com/blob_signed.mp4"
 
@@ -1605,15 +1612,24 @@ def test_controller_download_zip_redirect_and_source_file(api_client):
         status="completed",
     )
     with (
-        patch("src.custom.subtitles.subtitle_controller.subtitle_service.get_job_status", return_value=dto),
-        patch("src.custom.subtitles.subtitle_controller.subtitle_service.get_artifact_signed_url", return_value="https://storage.googleapis.com/signed_pkg.zip"),
+        patch(
+            "src.custom.subtitles.subtitle_controller.subtitle_service.get_job_status",
+            return_value=dto,
+        ),
+        patch(
+            "src.custom.subtitles.subtitle_controller.subtitle_service.get_artifact_signed_url",
+            return_value="https://storage.googleapis.com/signed_pkg.zip",
+        ),
     ):
         res = api_client.get(
             "/api/v1/custom/subtitles/download/sub_zip_123?file_type=zip",
             follow_redirects=False,
         )
         assert res.status_code == 307
-        assert res.headers["location"] == "https://storage.googleapis.com/signed_pkg.zip"
+        assert (
+            res.headers["location"]
+            == "https://storage.googleapis.com/signed_pkg.zip"
+        )
 
 
 def test_get_job_status_completed_enrichment_toggleable():
@@ -1625,9 +1641,117 @@ def test_get_job_status_completed_enrichment_toggleable():
     job.burn_subtitles = False
     service._save_job_state(job_id, job)
 
-    with patch.object(service, "get_artifact_signed_url", return_value="https://signed.url/item"):
+    with patch.object(
+        service,
+        "get_artifact_signed_url",
+        return_value="https://signed.url/item",
+    ):
         enriched = service.get_job_status(job_id)
         assert enriched.status == "completed"
         assert enriched.processed_video_url == "https://signed.url/item"
         assert enriched.default_toggleable_video == "https://signed.url/item"
 
+
+def test_get_artifact_gcs_uri_bucket_listing_matching():
+    """Tests get_artifact_gcs_uri finding matching blobs across all file types."""
+    service = SubtitleService()
+    job_id = service.create_job()
+    job = service.get_job_status(job_id)
+    service._save_job_state(job_id, job)
+
+    mock_storage = MagicMock()
+    service.engine.storage_client = mock_storage
+    mock_bucket = MagicMock()
+    mock_storage.bucket.return_value = mock_bucket
+
+    b_vtt = MagicMock()
+    b_vtt.name = f"subtitles_outputs/{job_id}/captions.vtt"
+    b_srt = MagicMock()
+    b_srt.name = f"subtitles_outputs/{job_id}/captions.srt"
+    b_burned = MagicMock()
+    b_burned.name = f"subtitles_outputs/{job_id}/output_burned_in.mp4"
+    b_toggle = MagicMock()
+    b_toggle.name = f"subtitles_outputs/{job_id}/output_toggleable.mp4"
+    b_source = MagicMock()
+    b_source.name = f"subtitles_outputs/{job_id}/source_video.mp4"
+    b_thumb = MagicMock()
+    b_thumb.name = f"subtitles_outputs/{job_id}/thumbnail.jpg"
+    b_zip = MagicMock()
+    b_zip.name = f"subtitles_outputs/{job_id}/package.zip"
+
+    mock_bucket.list_blobs.return_value = [
+        b_vtt,
+        b_srt,
+        b_burned,
+        b_toggle,
+        b_source,
+        b_thumb,
+        b_zip,
+    ]
+
+    assert "captions.vtt" in (service.get_artifact_gcs_uri(job_id, "vtt") or "")
+    assert "captions.srt" in (service.get_artifact_gcs_uri(job_id, "srt") or "")
+    assert "output_burned_in.mp4" in (
+        service.get_artifact_gcs_uri(job_id, "burned_in_video") or ""
+    )
+    assert "output_toggleable.mp4" in (
+        service.get_artifact_gcs_uri(job_id, "toggleable_video") or ""
+    )
+    assert "source_video.mp4" in (
+        service.get_artifact_gcs_uri(job_id, "source_video") or ""
+    )
+    assert "thumbnail.jpg" in (
+        service.get_artifact_gcs_uri(job_id, "thumbnail") or ""
+    )
+    assert "package.zip" in (service.get_artifact_gcs_uri(job_id, "zip") or "")
+
+
+def test_controller_generate_youtube_failure_and_multipart(api_client):
+    """Tests controller failure handling for YouTube download errors in JSON and multipart."""
+    with patch(
+        "src.custom.subtitles.subtitle_controller.subtitle_service.engine.download_youtube_audio",
+        side_effect=RuntimeError("YouTube download blocked"),
+    ):
+        res_json = api_client.post(
+            "/api/v1/custom/subtitles/generate",
+            json={"video_url": "https://www.youtube.com/watch?v=err123"},
+        )
+        assert res_json.status_code == 400
+        assert "YouTube" in res_json.json()["detail"]
+
+        res_form = api_client.post(
+            "/api/v1/custom/subtitles/generate",
+            data={"video_url": "https://www.youtube.com/watch?v=err123"},
+        )
+        assert res_form.status_code == 400
+        assert "YouTube" in res_form.json()["detail"]
+
+
+def test_controller_download_zip_fallback(api_client, tmp_path):
+    """Tests controller ZIP download fallback when signed URL is not present."""
+    fake_zip = tmp_path / "fake.zip"
+    fake_zip.write_bytes(b"PK00fake")
+    dto = SubtitleResponseDTO(
+        job_id="sub_zip_fallback",
+        status="completed",
+    )
+    with (
+        patch(
+            "src.custom.subtitles.subtitle_controller.subtitle_service.get_job_status",
+            return_value=dto,
+        ),
+        patch(
+            "src.custom.subtitles.subtitle_controller.subtitle_service.get_artifact_signed_url",
+            return_value=None,
+        ),
+        patch(
+            "src.custom.subtitles.subtitle_controller.subtitle_service.create_job_zip_package",
+            return_value=str(fake_zip),
+        ),
+    ):
+        res = api_client.get(
+            "/api/v1/custom/subtitles/download/sub_zip_fallback?file_type=zip",
+            follow_redirects=False,
+        )
+        assert res.status_code == 200
+        assert res.headers["content-type"] == "application/zip"
