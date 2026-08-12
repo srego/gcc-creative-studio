@@ -77,7 +77,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   readonly packageName = signal<string>('');
   readonly sourceLanguage = signal<string>('en-US');
   readonly enableDynamicSubtitles = signal<boolean>(true);
-  readonly enableBurnedInVideo = signal<boolean>(false);
+  readonly enableBurnedInVideo = signal<boolean>(true);
   readonly subtitleStylePreset = signal<'minimal' | 'tiktok' | 'box' | 'neon'>(
     'minimal',
   );
@@ -601,14 +601,29 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
 
     if (res.job_id) {
       this.activeJobId.set(res.job_id);
-      const videoFileType =
-        res.burned_in_video || this.enableBurnedInVideo()
-          ? 'burned_in_video'
-          : 'toggleable_video';
-      const streamUrl =
-        res.processed_video_url && res.processed_video_url.startsWith('http')
-          ? res.processed_video_url
-          : this.subtitlesService.getDownloadUrl(res.job_id, videoFileType);
+      const isBurned = res.burned_in_video || this.enableBurnedInVideo();
+      const videoFileType = isBurned ? 'burned_in_video' : 'toggleable_video';
+
+      let streamUrl: string | null = null;
+      if (res.burned_in_video && res.burned_in_video.startsWith('http')) {
+        streamUrl = res.burned_in_video;
+      } else if (
+        res.processed_video_url &&
+        res.processed_video_url.startsWith('http')
+      ) {
+        streamUrl = res.processed_video_url;
+      } else if (
+        res.default_toggleable_video &&
+        res.default_toggleable_video.startsWith('http')
+      ) {
+        streamUrl = res.default_toggleable_video;
+      } else {
+        streamUrl = this.subtitlesService.getDownloadUrl(
+          res.job_id,
+          videoFileType,
+        );
+      }
+
       this.subtitledVideoPreviewUrl.set(streamUrl);
       this.previewVideoUrl.set(streamUrl);
 
@@ -629,36 +644,38 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   }
 
   onBurnedVideoError(event: Event): void {
-    console.warn(
-      'Burned video stream playback error, switching to direct download stream',
-      event,
-    );
+    const currentUrl = this.subtitledVideoPreviewUrl();
     const jid = this.activeJobId();
-    if (jid) {
+    if (jid && currentUrl && !currentUrl.includes('/api/v1/custom/subtitles/download/')) {
+      console.warn(
+        'Burned video stream playback error, attempting endpoint download fallback',
+        event,
+      );
       const fallbackUrl = this.subtitlesService.getDownloadUrl(
         jid,
         'burned_in_video',
       );
-      if (this.subtitledVideoPreviewUrl() !== fallbackUrl) {
-        this.subtitledVideoPreviewUrl.set(fallbackUrl);
-      }
+      this.subtitledVideoPreviewUrl.set(fallbackUrl);
+    } else {
+      console.warn('Burned video stream error event received:', event);
     }
   }
 
   onSourceVideoError(event: Event): void {
-    console.warn(
-      'Source video stream playback error, switching to direct download stream',
-      event,
-    );
+    const currentUrl = this.sourceVideoPreviewUrl();
     const jid = this.activeJobId();
-    if (jid) {
+    if (jid && currentUrl && !currentUrl.includes('/api/v1/custom/subtitles/download/')) {
+      console.warn(
+        'Source video stream playback error, attempting endpoint download fallback',
+        event,
+      );
       const fallbackUrl = this.subtitlesService.getDownloadUrl(
         jid,
         'source_video',
       );
-      if (this.sourceVideoPreviewUrl() !== fallbackUrl) {
-        this.sourceVideoPreviewUrl.set(fallbackUrl);
-      }
+      this.sourceVideoPreviewUrl.set(fallbackUrl);
+    } else {
+      console.warn('Source video stream error event received:', event);
     }
   }
 

@@ -1442,8 +1442,9 @@ def test_finish_job_from_asr_direct(tmp_path):
         )
         assert finished.status == "completed"
         assert finished.progress == 100
-        assert finished.subtitles_vtt == "/tmp/subtitles.vtt"
-        assert finished.burned_in_video == "/tmp/burned.mp4"
+        assert finished.subtitles_vtt == "gs://bucket/out"
+        assert finished.burned_in_video == "gs://bucket/out"
+        assert finished.processed_video_url == "gs://bucket/out"
 
 
 def test_get_job_status_recovery_branch():

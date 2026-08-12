@@ -1048,7 +1048,7 @@ class SubtitleService:
                 else result.get("default_toggleable_video")
             )
 
-            # Persist output files to GCS and record GCS URIs
+            # Persist output files to GCS and record canonical GCS URIs in job state
             vtt_gcs = self._upload_artifact_to_gcs(job_id, job.subtitles_vtt)
             srt_gcs = self._upload_artifact_to_gcs(job_id, job.subtitles_srt)
             toggle_gcs = self._upload_artifact_to_gcs(
@@ -1059,13 +1059,24 @@ class SubtitleService:
             )
             self._upload_artifact_to_gcs(job_id, result.get("thumbnail_jpg"))
 
+            if vtt_gcs:
+                job.subtitles_vtt = vtt_gcs
+                job.subtitle_url = vtt_gcs
+            if srt_gcs:
+                job.subtitles_srt = srt_gcs
+            if toggle_gcs:
+                job.default_toggleable_video = toggle_gcs
+            if burned_gcs:
+                job.burned_in_video = burned_gcs
+
             if burned_gcs and job.burn_subtitles:
                 job.processed_video_url = burned_gcs
             elif toggle_gcs:
                 job.processed_video_url = toggle_gcs
-
-            if vtt_gcs:
-                job.subtitle_url = vtt_gcs
+            elif burned_gcs:
+                job.processed_video_url = burned_gcs
+            elif vtt_gcs:
+                job.processed_video_url = vtt_gcs
 
         except Exception as e:
             logger.error(
@@ -1189,22 +1200,36 @@ class SubtitleService:
                     logger.debug("Recovery check for %s skipped: %s", job_id, e)
 
         if job.status == "completed":
-            target_video_type = (
-                "burned_in_video" if job.burn_subtitles else "toggleable_video"
+            signed_burned = self.get_artifact_signed_url(
+                job_id, "burned_in_video"
             )
-            signed_video = self.get_artifact_signed_url(
-                job_id, target_video_type
+            signed_toggle = self.get_artifact_signed_url(
+                job_id, "toggleable_video"
             )
-            if signed_video:
-                job.processed_video_url = signed_video
-                if job.burn_subtitles:
-                    job.burned_in_video = signed_video
-                else:
-                    job.default_toggleable_video = signed_video
+            signed_source = self.get_artifact_signed_url(
+                job_id, "source_video"
+            )
             signed_vtt = self.get_artifact_signed_url(job_id, "vtt")
+            signed_srt = self.get_artifact_signed_url(job_id, "srt")
+
+            if signed_burned:
+                job.burned_in_video = signed_burned
+            if signed_toggle:
+                job.default_toggleable_video = signed_toggle
+            if signed_source:
+                job.source_video_path = signed_source
             if signed_vtt:
                 job.subtitle_url = signed_vtt
                 job.subtitles_vtt = signed_vtt
+            if signed_srt:
+                job.subtitles_srt = signed_srt
+
+            if signed_burned and job.burn_subtitles:
+                job.processed_video_url = signed_burned
+            elif signed_toggle:
+                job.processed_video_url = signed_toggle
+            elif signed_burned:
+                job.processed_video_url = signed_burned
 
         return job
 
@@ -1737,11 +1762,34 @@ class SubtitleService:
                 else result.get("default_toggleable_video")
             )
 
-            # Persist output files to GCS for multi-instance download access
-            self._upload_artifact_to_gcs(job_id, job.subtitles_vtt)
-            self._upload_artifact_to_gcs(job_id, job.subtitles_srt)
-            self._upload_artifact_to_gcs(job_id, job.default_toggleable_video)
-            self._upload_artifact_to_gcs(job_id, job.burned_in_video)
+            # Persist output files to GCS and record canonical GCS URIs
+            vtt_gcs = self._upload_artifact_to_gcs(job_id, job.subtitles_vtt)
+            srt_gcs = self._upload_artifact_to_gcs(job_id, job.subtitles_srt)
+            toggle_gcs = self._upload_artifact_to_gcs(
+                job_id, job.default_toggleable_video
+            )
+            burned_gcs = self._upload_artifact_to_gcs(
+                job_id, job.burned_in_video
+            )
+
+            if vtt_gcs:
+                job.subtitles_vtt = vtt_gcs
+                job.subtitle_url = vtt_gcs
+            if srt_gcs:
+                job.subtitles_srt = srt_gcs
+            if toggle_gcs:
+                job.default_toggleable_video = toggle_gcs
+            if burned_gcs:
+                job.burned_in_video = burned_gcs
+
+            if burned_gcs and burn_subtitles:
+                job.processed_video_url = burned_gcs
+            elif toggle_gcs:
+                job.processed_video_url = toggle_gcs
+            elif burned_gcs:
+                job.processed_video_url = burned_gcs
+            elif vtt_gcs:
+                job.processed_video_url = vtt_gcs
 
         except Exception as e:
             logger.error(f"Subtitle job {job_id} failed: {e}", exc_info=True)
