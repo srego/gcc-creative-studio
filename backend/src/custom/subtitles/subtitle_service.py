@@ -1206,9 +1206,7 @@ class SubtitleService:
             signed_toggle = self.get_artifact_signed_url(
                 job_id, "toggleable_video"
             )
-            signed_source = self.get_artifact_signed_url(
-                job_id, "source_video"
-            )
+            signed_source = self.get_artifact_signed_url(job_id, "source_video")
             signed_vtt = self.get_artifact_signed_url(job_id, "vtt")
             signed_srt = self.get_artifact_signed_url(job_id, "srt")
 

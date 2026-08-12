@@ -1756,3 +1756,77 @@ def test_controller_download_zip_fallback(api_client, tmp_path):
         )
         assert res.status_code == 200
         assert res.headers["content-type"] == "application/zip"
+
+
+def test_get_job_status_presigned_url_enrichment_all_types():
+    """Tests get_job_status presigned enrichment for burned video, toggleable video, source, and subtitles."""
+    service = SubtitleService()
+    job_id = service.create_job()
+    job = service.get_job_status(job_id)
+    job.status = "completed"
+    job.burn_subtitles = True
+    job.burned_in_video = "gs://bucket/subtitles_outputs/burned.mp4"
+    job.default_toggleable_video = "gs://bucket/subtitles_outputs/toggle.mp4"
+    job.source_video_path = "gs://bucket/subtitles_outputs/source.mp4"
+    job.subtitles_vtt = "gs://bucket/subtitles_outputs/subtitles.vtt"
+    job.subtitles_srt = "gs://bucket/subtitles_outputs/subtitles.srt"
+    service._save_job_state(job_id, job)
+
+    with patch.object(
+        service,
+        "get_artifact_signed_url",
+        side_effect=lambda jid, ftype, **kw: f"https://signed.url/{ftype}",
+    ):
+        enriched = service.get_job_status(job_id)
+        assert enriched is not None
+        assert enriched.burned_in_video == "https://signed.url/burned_in_video"
+        assert (
+            enriched.default_toggleable_video
+            == "https://signed.url/toggleable_video"
+        )
+        assert enriched.source_video_path == "https://signed.url/source_video"
+        assert enriched.subtitles_vtt == "https://signed.url/vtt"
+        assert enriched.subtitles_srt == "https://signed.url/srt"
+        assert (
+            enriched.processed_video_url == "https://signed.url/burned_in_video"
+        )
+
+
+def test_process_job_gcs_persistence_and_enrichment(tmp_path):
+    """Tests process_job updating job DTO with canonical GCS URIs."""
+    service = SubtitleService()
+    job_id = service.create_job()
+    video_file = tmp_path / "test_vid.mp4"
+    video_file.write_bytes(b"dummy")
+
+    with (
+        patch.object(
+            service.engine,
+            "process_video",
+            return_value={
+                "subtitles_vtt": "/tmp/vtt.vtt",
+                "subtitles_srt": "/tmp/srt.srt",
+                "default_toggleable_video": "/tmp/toggle.mp4",
+                "burned_in_video": "/tmp/burned.mp4",
+                "segment_count": 1,
+                "transcript_text": "Sample text",
+                "thumbnail_jpg": "/tmp/thumb.jpg",
+            },
+        ),
+        patch.object(
+            service,
+            "_upload_artifact_to_gcs",
+            return_value="gs://bucket/uploaded_file",
+        ),
+    ):
+        res = service.process_job(
+            job_id=job_id,
+            video_path=str(video_file),
+            burn_subtitles=True,
+            output_format="vtt",
+        )
+        assert res.status == "completed"
+        assert res.subtitles_vtt == "gs://bucket/uploaded_file"
+        assert res.subtitles_srt == "gs://bucket/uploaded_file"
+        assert res.burned_in_video == "gs://bucket/uploaded_file"
+        assert res.processed_video_url == "gs://bucket/uploaded_file"

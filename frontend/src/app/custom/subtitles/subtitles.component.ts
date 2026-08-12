@@ -646,7 +646,11 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   onBurnedVideoError(event: Event): void {
     const currentUrl = this.subtitledVideoPreviewUrl();
     const jid = this.activeJobId();
-    if (jid && currentUrl && !currentUrl.includes('/api/v1/custom/subtitles/download/')) {
+    if (
+      jid &&
+      currentUrl &&
+      !currentUrl.includes('/api/v1/custom/subtitles/download/')
+    ) {
       console.warn(
         'Burned video stream playback error, attempting endpoint download fallback',
         event,
@@ -664,7 +668,11 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   onSourceVideoError(event: Event): void {
     const currentUrl = this.sourceVideoPreviewUrl();
     const jid = this.activeJobId();
-    if (jid && currentUrl && !currentUrl.includes('/api/v1/custom/subtitles/download/')) {
+    if (
+      jid &&
+      currentUrl &&
+      !currentUrl.includes('/api/v1/custom/subtitles/download/')
+    ) {
       console.warn(
         'Source video stream playback error, attempting endpoint download fallback',
         event,
