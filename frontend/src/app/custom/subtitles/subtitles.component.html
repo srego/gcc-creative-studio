@@ -264,9 +264,14 @@
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <!-- Option 1: Dynamic Subtitles -->
             <div
+              role="checkbox"
+              [attr.aria-checked]="enableDynamicSubtitles()"
+              tabindex="0"
+              (keydown.enter)="toggleDynamicSubtitles()"
+              (keydown.space)="toggleDynamicSubtitles(); $event.preventDefault()"
               (click)="toggleDynamicSubtitles()"
               [ngClass]="enableDynamicSubtitles() ? 'border-indigo-500 bg-indigo-950/40' : 'border-neutral-800 bg-neutral-900/40'"
-              class="p-4 rounded-xl border flex items-start gap-3 cursor-pointer transition-all"
+              class="p-4 rounded-xl border flex items-start gap-3 cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
             >
               <div
                 [ngClass]="enableDynamicSubtitles() ? 'bg-indigo-600 border-indigo-500' : 'bg-neutral-800 border-neutral-700'"
@@ -282,9 +287,14 @@
 
             <!-- Option 2: Burned-In Video with Processing Warning -->
             <div
+              role="checkbox"
+              [attr.aria-checked]="enableBurnedInVideo()"
+              tabindex="0"
+              (keydown.enter)="toggleBurnedInVideo()"
+              (keydown.space)="toggleBurnedInVideo(); $event.preventDefault()"
               (click)="toggleBurnedInVideo()"
               [ngClass]="enableBurnedInVideo() ? 'border-purple-500 bg-purple-950/40' : 'border-neutral-800 bg-neutral-900/40'"
-              class="p-4 rounded-xl border flex flex-col gap-2 cursor-pointer transition-all"
+              class="p-4 rounded-xl border flex flex-col gap-2 cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-purple-500/50"
             >
               <div class="flex items-start gap-3">
                 <div
@@ -386,9 +396,19 @@
                 controls
                 playsinline
                 preload="metadata"
+                crossorigin="anonymous"
                 (error)="onSourceVideoError($event)"
                 class="w-full h-full object-contain"
-              ></video>
+              >
+                <track
+                  *ngIf="vttTrackUrl()"
+                  kind="subtitles"
+                  [src]="vttTrackUrl()"
+                  srclang="en"
+                  label="Subtitles"
+                  default
+                />
+              </video>
 
               <div *ngIf="!sourceVideoPreviewUrl()" class="flex flex-col items-center justify-center gap-2 text-neutral-500 py-6">
                 <mat-icon class="text-4xl text-neutral-600">movie_creation</mat-icon>

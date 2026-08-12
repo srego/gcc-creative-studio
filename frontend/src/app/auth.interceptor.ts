@@ -35,6 +35,15 @@ export class AuthInterceptor implements HttpInterceptor {
     request: HttpRequest<unknown>,
     next: HttpHandler,
   ): Observable<HttpEvent<unknown>> {
+    // Skip Authorization header for Cloud Storage presigned URLs or external requests
+    if (
+      request.url.includes('storage.googleapis.com') ||
+      (!request.url.startsWith('/api') &&
+        !request.url.startsWith(environment.backendURL))
+    ) {
+      return next.handle(request);
+    }
+
     // Asynchronously get a valid token. This will use the cache or trigger a silent refresh.
     return this.authService.getValidIdentityPlatformToken$().pipe(
       switchMap(token => {

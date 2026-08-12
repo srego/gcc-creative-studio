@@ -14,10 +14,13 @@
 
 """FastAPI router controller for custom subtitle processing endpoints."""
 
+import asyncio
+import logging
 import os
 import re
 import shutil
 import tempfile
+from urllib.parse import urlparse
 
 from fastapi import (
     APIRouter,
@@ -42,6 +45,27 @@ from src.custom.subtitles.subtitle_dto import (
 from src.custom.subtitles.subtitle_service import subtitle_service
 from src.database import get_db
 from src.users.user_model import UserModel, UserRoleEnum
+
+logger = logging.getLogger(__name__)
+
+
+def is_valid_youtube_url(url: str) -> bool:
+    """Strictly validates if a URL belongs to legitimate YouTube domains."""
+    try:
+        parsed = urlparse(url.strip())
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = (parsed.hostname or "").lower()
+        return hostname in (
+            "youtube.com",
+            "www.youtube.com",
+            "m.youtube.com",
+            "youtu.be",
+            "www.youtu.be",
+        )
+    except Exception:
+        return False
+
 
 router = APIRouter(
     prefix="/api/v1/custom/subtitles",
@@ -123,12 +147,12 @@ async def generate_subtitles(
             )
 
             if video_source:
-                if "youtube.com" in video_source or "youtu.be" in video_source:
+                if is_valid_youtube_url(video_source):
                     try:
-                        target_video_path = (
-                            subtitle_service.engine.download_youtube_audio(
-                                video_source, job_dir
-                            )
+                        target_video_path = await asyncio.to_thread(
+                            subtitle_service.engine.download_youtube_audio,
+                            video_source,
+                            job_dir,
                         )
                     except Exception as e:
                         raise HTTPException(
@@ -169,18 +193,20 @@ async def generate_subtitles(
                 or "source_video.mp4"
             )
             upload_path = os.path.join(job_dir, safe_filename)
+            file_bytes = await uploaded_file.read()
             with open(upload_path, "wb") as buffer:
-                shutil.copyfileobj(uploaded_file.file, buffer)
+                buffer.write(file_bytes)
             target_video_path = upload_path
 
         video_url = form.get("video_url") or form.get("video_uri")
         if video_url and not target_video_path:
-            if "youtube.com" in str(video_url) or "youtu.be" in str(video_url):
+            video_url_str = str(video_url)
+            if is_valid_youtube_url(video_url_str):
                 try:
-                    target_video_path = (
-                        subtitle_service.engine.download_youtube_audio(
-                            str(video_url), job_dir
-                        )
+                    target_video_path = await asyncio.to_thread(
+                        subtitle_service.engine.download_youtube_audio,
+                        video_url_str,
+                        job_dir,
                     )
                 except Exception as e:
                     raise HTTPException(
@@ -188,7 +214,7 @@ async def generate_subtitles(
                         detail=f"Failed to download YouTube audio: {str(e)}",
                     ) from e
             else:
-                target_video_path = str(video_url)
+                target_video_path = video_url_str
 
         req_lang = str(form.get("language_code", "en-US"))
         req_format = str(form.get("output_format", "vtt"))
@@ -207,7 +233,8 @@ async def generate_subtitles(
         )
 
     if sync:
-        res_dto = subtitle_service.process_job(
+        res_dto = await asyncio.to_thread(
+            subtitle_service.process_job,
             job_id=job_id,
             video_path=target_video_path,
             burn_subtitles=req_burn,
@@ -265,7 +292,7 @@ def get_job_status(job_id: str) -> SubtitleResponseDTO:
     "/download/{job_id}",
     summary="Download Generated Subtitle or Video File",
 )
-def download_output_file(
+async def download_output_file(
     job_id: str,
     file_type: str = "vtt",
 ) -> Response:
@@ -288,7 +315,9 @@ def download_output_file(
                     status_code=status.HTTP_307_TEMPORARY_REDIRECT,
                 )
 
-            zip_file = subtitle_service.create_job_zip_package(job_id)
+            zip_file = await asyncio.to_thread(
+                subtitle_service.create_job_zip_package, job_id
+            )
             if not zip_file or not os.path.exists(zip_file):
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,

@@ -24,7 +24,10 @@ import {
   computed,
   PLATFORM_ID,
   Inject,
+  DestroyRef,
+  inject,
 } from '@angular/core';
+import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
 import {MatDialog} from '@angular/material/dialog';
 import {ActivatedRoute} from '@angular/router';
 import {Subscription, timer, of, throwError} from 'rxjs';
@@ -50,6 +53,8 @@ export type SubtitleStep =
   styleUrls: ['./subtitles.component.scss'],
 })
 export class SubtitlesComponent implements OnInit, OnDestroy {
+  private destroyRef = inject(DestroyRef);
+
   constructor(
     private dialog: MatDialog,
     private subtitlesService: SubtitlesService,
@@ -154,50 +159,59 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     return this.packageName().trim() || this.suggestedPackageName();
   });
 
+  readonly vttTrackUrl = computed(() => {
+    const jid = this.activeJobId();
+    if (jid && this.isComplete() && this.enableDynamicSubtitles()) {
+      return this.subtitlesService.getDownloadUrl(jid, 'vtt');
+    }
+    return null;
+  });
+
   ngOnInit(): void {
-    this.route.queryParamMap.subscribe(params => {
-      const jobId = params.get('job_id');
-      const gcsUri = params.get('gcs_uri');
-      const videoUrl = params.get('video_url');
-      const packageName =
-        params.get('package_name') || params.get('title') || '';
+    this.route.queryParamMap
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(params => {
+        const jobId = params.get('job_id');
+        const gcsUri = params.get('gcs_uri');
+        const videoUrl = params.get('video_url');
+        const packageName =
+          params.get('package_name') || params.get('title') || '';
 
-      if (videoUrl) {
-        this.sourceVideoPreviewUrl.set(videoUrl);
-        this.previewVideoUrl.set(videoUrl);
-      }
-      if (packageName) {
-        this.packageName.set(packageName);
-      }
+        if (videoUrl) {
+          this.sourceVideoPreviewUrl.set(videoUrl);
+          this.previewVideoUrl.set(videoUrl);
+        }
+        if (packageName) {
+          this.packageName.set(packageName);
+        }
 
-      if (jobId) {
-        this.loadExistingJob(jobId);
-      } else if (packageName && videoUrl) {
-        // Direct completed restoration from Gallery for previously subtitled items
-        this.processingStep.set('completed');
-        this.progressPercentage.set(100);
-        this.isProcessing.set(false);
-        this.enableBurnedInVideo.set(true);
-        this.subtitledVideoPreviewUrl.set(videoUrl);
-        if (gcsUri) {
-          this.activeJobId.set(packageName);
-          this.sourceVideoPreviewUrl.set(gcsUri);
+        if (jobId) {
+          this.loadExistingJob(jobId);
+        } else if (videoUrl) {
+          if (packageName) {
+            this.processingStep.set('completed');
+            this.progressPercentage.set(100);
+            this.isProcessing.set(false);
+            this.enableBurnedInVideo.set(true);
+            this.subtitledVideoPreviewUrl.set(videoUrl);
+          }
+          if (gcsUri) {
+            this.activeTab.set('gallery');
+            this.selectedGalleryAsset.set({
+              id: 'gallery_source',
+              title: packageName || 'Gallery Video',
+              url: videoUrl,
+            });
+          }
+        } else if (gcsUri) {
+          this.activeTab.set('gallery');
           this.selectedGalleryAsset.set({
             id: 'gallery_source',
-            title: packageName,
+            title: packageName || 'Gallery Video',
             url: gcsUri,
           });
         }
-      } else if (gcsUri) {
-        this.activeTab.set('gallery');
-        this.sourceVideoPreviewUrl.set(gcsUri);
-        this.selectedGalleryAsset.set({
-          id: 'gallery_source',
-          title: packageName || 'Gallery Video',
-          url: gcsUri,
-        });
-      }
-    });
+      });
   }
 
   loadExistingJob(jobId: string): void {
@@ -283,10 +297,27 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     this.activeTab.set(tab);
   }
 
+  private validateFileSize(file: File): boolean {
+    const maxBytes = 500 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+      this.errorMessage.set(
+        `Selected file (${sizeMb} MB) exceeds maximum allowed size of 500 MB.`,
+      );
+      return false;
+    }
+    this.errorMessage.set(null);
+    return true;
+  }
+
   onFileSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
     if (input.files && input.files.length > 0) {
       const file = input.files[0];
+      if (!this.validateFileSize(file)) {
+        input.value = '';
+        return;
+      }
       this.cleanupPreviewUrl();
       this.selectedFile.set(file);
       const objUrl = isPlatformBrowser(this.platformId)
@@ -333,13 +364,17 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
             title = String(result['title']);
             url = String(result['url'] || result['gcs_uri'] || '');
           }
-          this.selectGalleryAsset({
-            id: String(result['id'] || 'gallery-selected'),
-            title: title || 'Media Gallery Video',
-            url:
-              url ||
-              'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-          });
+          if (url) {
+            this.selectGalleryAsset({
+              id: String(result['id'] || 'gallery-selected'),
+              title: title || 'Media Gallery Video',
+              url: url,
+            });
+          } else {
+            this.errorMessage.set(
+              'Selected asset does not contain a playable video URL.',
+            );
+          }
         }
       });
   }
@@ -383,6 +418,9 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     this.isDraggingOver.set(false);
     if (event.dataTransfer && event.dataTransfer.files.length > 0) {
       const file = event.dataTransfer.files[0];
+      if (!this.validateFileSize(file)) {
+        return;
+      }
       this.cleanupPreviewUrl();
       this.selectedFile.set(file);
       const objUrl = isPlatformBrowser(this.platformId)

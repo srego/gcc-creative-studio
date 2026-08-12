@@ -128,12 +128,14 @@ class PodcastSubtitleEngine:
             "-x",
             "--audio-format",
             "mp3",
+            "--no-warnings",
             "-o",
             output_template,
-            youtube_url,
+            "--",
+            youtube_url.strip(),
         ]
         logger.info(f"Downloading YouTube audio from {youtube_url}...")
-        res = subprocess.run(cmd, capture_output=True, text=True)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if res.returncode != 0:
             raise RuntimeError(f"yt-dlp download failed: {res.stderr}")
 
@@ -424,6 +426,15 @@ Word timing data:
             curr_words: List[str] = []
             curr_len = 0
             for w in words:
+                if len(w) > max_chars:
+                    if curr_words:
+                        sub_lines.append(" ".join(curr_words))
+                        curr_words = []
+                        curr_len = 0
+                    for i in range(0, len(w), max_chars):
+                        sub_lines.append(w[i : i + max_chars])
+                    continue
+
                 word_len = len(w) + (1 if curr_words else 0)
                 if curr_len + word_len <= max_chars:
                     curr_words.append(w)
@@ -635,7 +646,7 @@ Word timing data:
             temp_output_path,
         ]
 
-        res = subprocess.run(cmd, capture_output=True, text=True)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if res.returncode != 0:
             if os.path.exists(temp_output_path):
                 os.remove(temp_output_path)
@@ -861,12 +872,18 @@ class SubtitleService:
         self.engine = PodcastSubtitleEngine()
         self.jobs: Dict[str, SubtitleResponseDTO] = {}
         self._active_finishing_jobs: Set[str] = set()
+        self._jobs_lock = threading.Lock()
 
     def _save_job_state(
         self, job_id: str, job_dto: SubtitleResponseDTO
     ) -> None:
         """Persists job state to memory cache, local /tmp, and Google Cloud Storage."""
-        self.jobs[job_id] = job_dto
+        with self._jobs_lock:
+            if len(self.jobs) >= 100:
+                oldest_keys = list(self.jobs.keys())[:20]
+                for k in oldest_keys:
+                    self.jobs.pop(k, None)
+            self.jobs[job_id] = job_dto
 
         # 1. Local disk cache
         try:
@@ -1082,7 +1099,8 @@ class SubtitleService:
             job.error_message = str(e)
             self._save_job_state(job_id, job)
         finally:
-            self._active_finishing_jobs.discard(job_id)
+            with self._jobs_lock:
+                self._active_finishing_jobs.discard(job_id)
 
     def get_job_status(self, job_id: str) -> Optional[SubtitleResponseDTO]:
         """Retrieve job status DTO, checking active LRO if transcribing."""
@@ -1115,8 +1133,14 @@ class SubtitleService:
                         op_proto.response.Unpack(resp)
                         raw_asr = self.engine.parse_speech_response(resp)
 
-                        if job_id not in self._active_finishing_jobs:
-                            self._active_finishing_jobs.add(job_id)
+                        with self._jobs_lock:
+                            should_start = (
+                                job_id not in self._active_finishing_jobs
+                            )
+                            if should_start:
+                                self._active_finishing_jobs.add(job_id)
+
+                        if should_start:
                             job.step = "formatting"
                             job.progress = 65
                             self._save_job_state(job_id, job)
@@ -1134,7 +1158,6 @@ class SubtitleService:
             job.status == "processing"
             and job.step in ("formatting", "packaging")
             and job.operation_name
-            and job_id not in self._active_finishing_jobs
         ):
             if self.engine.speech_client and getattr(
                 self.engine.speech_client, "operations_client", None
@@ -1147,12 +1170,21 @@ class SubtitleService:
                         resp = cloud_speech.BatchRecognizeResponse()
                         op_proto.response.Unpack(resp)
                         raw_asr = self.engine.parse_speech_response(resp)
-                        self._active_finishing_jobs.add(job_id)
-                        thread = threading.Thread(
-                            target=self._run_async_finish,
-                            args=(job_id, job, raw_asr),
-                            daemon=True,
-                        )
+
+                        with self._jobs_lock:
+                            should_start = (
+                                job_id not in self._active_finishing_jobs
+                            )
+                            if should_start:
+                                self._active_finishing_jobs.add(job_id)
+
+                        if should_start:
+                            thread = threading.Thread(
+                                target=self._run_async_finish,
+                                args=(job_id, job, raw_asr),
+                                daemon=True,
+                            )
+                            thread.start()
                 except Exception as e:
                     logger.debug("Recovery check for %s skipped: %s", job_id, e)
 
@@ -1226,15 +1258,11 @@ class SubtitleService:
                 version += 1
 
         try:
-            os.makedirs(candidate_dir, exist_ok=True)
-            try:
-                os.chmod(candidate_dir, 0o777)
-            except Exception:
-                pass
+            os.makedirs(candidate_dir, exist_ok=True, mode=0o755)
         except Exception:
             base_dir = "/tmp/output_subtitles"
             candidate_dir = os.path.join(base_dir, folder_name)
-            os.makedirs(candidate_dir, exist_ok=True)
+            os.makedirs(candidate_dir, exist_ok=True, mode=0o755)
 
         return candidate_dir
 
