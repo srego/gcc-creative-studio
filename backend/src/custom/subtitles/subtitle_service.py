@@ -1044,16 +1044,11 @@ class SubtitleService:
 
             if burned_gcs and job.burn_subtitles:
                 job.processed_video_url = burned_gcs
-                job.burned_in_video = burned_gcs
             elif toggle_gcs:
                 job.processed_video_url = toggle_gcs
-                job.default_toggleable_video = toggle_gcs
 
             if vtt_gcs:
                 job.subtitle_url = vtt_gcs
-                job.subtitles_vtt = vtt_gcs
-            if srt_gcs:
-                job.subtitles_srt = srt_gcs
 
         except Exception as e:
             logger.error(
@@ -1328,10 +1323,13 @@ class SubtitleService:
             return None
 
     def get_artifact_gcs_uri(
-        self, job_id: str, file_type: str
+        self,
+        job_id: str,
+        file_type: str,
+        job_dto: Optional[SubtitleResponseDTO] = None,
     ) -> Optional[str]:
         """Resolves canonical Google Cloud Storage URI (gs://...) for any job artifact."""
-        status_dto = self.get_job_status(job_id)
+        status_dto = job_dto or self._load_job_state(job_id)
         if not status_dto:
             return None
 
@@ -1343,23 +1341,43 @@ class SubtitleService:
 
         # 1. Direct check on status DTO attributes if storing gs://
         if file_type in ("burned_in_video", "burned"):
-            if status_dto.burned_in_video and status_dto.burned_in_video.startswith("gs://"):
+            if (
+                status_dto.burned_in_video
+                and status_dto.burned_in_video.startswith("gs://")
+            ):
                 return status_dto.burned_in_video
-            if status_dto.processed_video_url and status_dto.processed_video_url.startswith("gs://"):
+            if (
+                status_dto.processed_video_url
+                and status_dto.processed_video_url.startswith("gs://")
+            ):
                 return status_dto.processed_video_url
         elif file_type in ("toggleable_video", "toggleable"):
-            if status_dto.default_toggleable_video and status_dto.default_toggleable_video.startswith("gs://"):
+            if (
+                status_dto.default_toggleable_video
+                and status_dto.default_toggleable_video.startswith("gs://")
+            ):
                 return status_dto.default_toggleable_video
         elif file_type in ("source_video", "source"):
-            if status_dto.source_video_path and status_dto.source_video_path.startswith("gs://"):
+            if (
+                status_dto.source_video_path
+                and status_dto.source_video_path.startswith("gs://")
+            ):
                 return status_dto.source_video_path
         elif file_type == "vtt":
-            if status_dto.subtitles_vtt and status_dto.subtitles_vtt.startswith("gs://"):
+            if (
+                status_dto.subtitles_vtt
+                and status_dto.subtitles_vtt.startswith("gs://")
+            ):
                 return status_dto.subtitles_vtt
-            if status_dto.subtitle_url and status_dto.subtitle_url.startswith("gs://"):
+            if status_dto.subtitle_url and status_dto.subtitle_url.startswith(
+                "gs://"
+            ):
                 return status_dto.subtitle_url
         elif file_type == "srt":
-            if status_dto.subtitles_srt and status_dto.subtitles_srt.startswith("gs://"):
+            if (
+                status_dto.subtitles_srt
+                and status_dto.subtitles_srt.startswith("gs://")
+            ):
                 return status_dto.subtitles_srt
 
         # 2. Check storage bucket listing
@@ -1424,7 +1442,12 @@ class SubtitleService:
                     if matched:
                         return f"gs://{bucket_name}/{blob.name}"
         except Exception as e:
-            logger.debug("Error querying GCS for %s artifact %s: %s", job_id, file_type, e)
+            logger.debug(
+                "Error querying GCS for %s artifact %s: %s",
+                job_id,
+                file_type,
+                e,
+            )
 
         # 3. Predict standard GCS path
         if file_type in ("burned_in_video", "burned"):
@@ -1434,9 +1457,13 @@ class SubtitleService:
         elif file_type in ("source_video", "source"):
             return f"gs://{bucket_name}/subtitles_outputs/{job_id}/source_video.mp4"
         elif file_type == "vtt":
-            return f"gs://{bucket_name}/subtitles_outputs/{job_id}/subtitles.vtt"
+            return (
+                f"gs://{bucket_name}/subtitles_outputs/{job_id}/subtitles.vtt"
+            )
         elif file_type == "srt":
-            return f"gs://{bucket_name}/subtitles_outputs/{job_id}/subtitles.srt"
+            return (
+                f"gs://{bucket_name}/subtitles_outputs/{job_id}/subtitles.srt"
+            )
 
         return None
 
@@ -1447,9 +1474,10 @@ class SubtitleService:
         for_download: bool = False,
         filename: Optional[str] = None,
         expiration_hours: int = 4,
+        job_dto: Optional[SubtitleResponseDTO] = None,
     ) -> Optional[str]:
         """Generates a V4 Presigned URL for high-speed streaming or direct downloading from GCS."""
-        gcs_uri = self.get_artifact_gcs_uri(job_id, file_type)
+        gcs_uri = self.get_artifact_gcs_uri(job_id, file_type, job_dto=job_dto)
         if not gcs_uri or not gcs_uri.startswith("gs://"):
             return None
 
@@ -1491,7 +1519,7 @@ class SubtitleService:
 
     def get_artifact_file(self, job_id: str, file_type: str) -> Optional[str]:
         """Resolves local path for an artifact, downloading from GCS if on another instance."""
-        status_dto = self.get_job_status(job_id)
+        status_dto = self._load_job_state(job_id)
         if not status_dto:
             return None
 
@@ -1536,13 +1564,21 @@ class SubtitleService:
                     matched = True
                 elif (
                     file_type in ("burned_in_video", "burned")
-                    and ("burned" in filename or "subtitled" in filename or filename == "output_burned_in.mp4")
+                    and (
+                        "burned" in filename
+                        or "subtitled" in filename
+                        or filename == "output_burned_in.mp4"
+                    )
                     and filename.endswith(".mp4")
                 ):
                     matched = True
                 elif (
                     file_type in ("toggleable_video", "toggleable")
-                    and ("toggleable" in filename or "default" in filename or filename == "output_toggleable.mp4")
+                    and (
+                        "toggleable" in filename
+                        or "default" in filename
+                        or filename == "output_toggleable.mp4"
+                    )
                     and filename.endswith(".mp4")
                 ):
                     matched = True
@@ -1864,7 +1900,9 @@ class SubtitleService:
             if not burned_gcs:
                 burned_local = self.get_artifact_file(job_id, "burned_in_video")
                 if burned_local:
-                    burned_gcs = self._upload_artifact_to_gcs(job_id, burned_local)
+                    burned_gcs = self._upload_artifact_to_gcs(
+                        job_id, burned_local
+                    )
             if not burned_gcs:
                 burned_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_outputs/{job_id}/output_burned_in.mp4"
             attached_deliverables.append(
@@ -1906,7 +1944,9 @@ class SubtitleService:
                 except Exception as e:
                     logger.debug(f"Error discovering source video: {e}")
             if source_video_path and os.path.exists(source_video_path):
-                source_gcs = self._upload_artifact_to_gcs(job_id, source_video_path)
+                source_gcs = self._upload_artifact_to_gcs(
+                    job_id, source_video_path
+                )
 
         if not source_gcs:
             source_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_outputs/{job_id}/source_video.mp4"
@@ -1949,7 +1989,12 @@ class SubtitleService:
             video_for_thumb = (
                 self.get_artifact_file(job_id, "burned_in_video")
                 or self.get_artifact_file(job_id, "toggleable_video")
-                or (job.source_video_path if job.source_video_path and not job.source_video_path.startswith("gs://") else None)
+                or (
+                    job.source_video_path
+                    if job.source_video_path
+                    and not job.source_video_path.startswith("gs://")
+                    else None
+                )
             )
             thumb_exists = False
             try:

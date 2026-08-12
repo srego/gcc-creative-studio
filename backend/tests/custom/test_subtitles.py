@@ -1500,16 +1500,29 @@ def test_get_artifact_gcs_uri_and_signed_url():
     service = SubtitleService()
     job_id = service.create_job()
     job = service.get_job_status(job_id)
-    job.burned_in_video = "gs://bucket/subtitles_outputs/sub123/output_burned_in.mp4"
-    job.source_video_path = "gs://bucket/subtitles_outputs/sub123/source_video.mp4"
+    job.burned_in_video = (
+        "gs://bucket/subtitles_outputs/sub123/output_burned_in.mp4"
+    )
+    job.source_video_path = (
+        "gs://bucket/subtitles_outputs/sub123/source_video.mp4"
+    )
     job.subtitles_vtt = "gs://bucket/subtitles_outputs/sub123/subtitles.vtt"
     service._save_job_state(job_id, job)
 
-    assert service.get_artifact_gcs_uri(job_id, "burned_in_video") == job.burned_in_video
-    assert service.get_artifact_gcs_uri(job_id, "source_video") == job.source_video_path
+    assert (
+        service.get_artifact_gcs_uri(job_id, "burned_in_video")
+        == job.burned_in_video
+    )
+    assert (
+        service.get_artifact_gcs_uri(job_id, "source_video")
+        == job.source_video_path
+    )
     assert service.get_artifact_gcs_uri(job_id, "vtt") == job.subtitles_vtt
 
-    with patch("src.auth.iam_signer_credentials_service.IamSignerCredentials.generate_presigned_url", return_value="https://storage.googleapis.com/signed/sub.mp4"):
+    with patch(
+        "src.auth.iam_signer_credentials_service.IamSignerCredentials.generate_presigned_url",
+        return_value="https://storage.googleapis.com/signed/sub.mp4",
+    ):
         signed = service.get_artifact_signed_url(job_id, "burned_in_video")
         assert signed == "https://storage.googleapis.com/signed/sub.mp4"
 
@@ -1522,13 +1535,99 @@ def test_controller_download_redirect_to_signed_url(api_client):
         burned_in_video="gs://bucket/subtitles_outputs/sub_redirect_123/output_burned_in.mp4",
     )
     with (
-        patch("src.custom.subtitles.subtitle_controller.subtitle_service.get_job_status", return_value=dto),
-        patch("src.custom.subtitles.subtitle_controller.subtitle_service.get_artifact_signed_url", return_value="https://storage.googleapis.com/signed_video.mp4"),
+        patch(
+            "src.custom.subtitles.subtitle_controller.subtitle_service.get_job_status",
+            return_value=dto,
+        ),
+        patch(
+            "src.custom.subtitles.subtitle_controller.subtitle_service.get_artifact_signed_url",
+            return_value="https://storage.googleapis.com/signed_video.mp4",
+        ),
     ):
         res = api_client.get(
             "/api/v1/custom/subtitles/download/sub_redirect_123?file_type=burned_in_video",
             follow_redirects=False,
         )
         assert res.status_code == 307
-        assert res.headers["location"] == "https://storage.googleapis.com/signed_video.mp4"
+        assert (
+            res.headers["location"]
+            == "https://storage.googleapis.com/signed_video.mp4"
+        )
+
+
+def test_get_artifact_signed_url_blob_fallback():
+    """Tests get_artifact_signed_url falling back to direct storage client blob signing."""
+    service = SubtitleService()
+    job_id = service.create_job()
+    job = service.get_job_status(job_id)
+    job.burned_in_video = "gs://test_bucket/subtitles_outputs/sub123/output_burned_in.mp4"
+    service._save_job_state(job_id, job)
+
+    mock_storage = MagicMock()
+    service.engine.storage_client = mock_storage
+    mock_bucket = MagicMock()
+    mock_storage.bucket.return_value = mock_bucket
+    mock_blob = MagicMock()
+    mock_bucket.blob.return_value = mock_blob
+    mock_blob.generate_signed_url.return_value = "https://storage.googleapis.com/blob_signed.mp4"
+
+    with patch("src.auth.iam_signer_credentials_service.IamSignerCredentials.generate_presigned_url", side_effect=RuntimeError("IAM signing unavailable")):
+        signed = service.get_artifact_signed_url(job_id, "burned_in_video")
+        assert signed == "https://storage.googleapis.com/blob_signed.mp4"
+
+
+def test_get_artifact_gcs_uri_all_predictions():
+    """Tests default GCS URI predictions for various artifact file types."""
+    service = SubtitleService()
+    job_id = service.create_job()
+    service.engine.storage_client = None
+
+    uri_burned = service.get_artifact_gcs_uri(job_id, "burned_in_video")
+    assert uri_burned and "output_burned_in.mp4" in uri_burned
+
+    uri_toggle = service.get_artifact_gcs_uri(job_id, "toggleable_video")
+    assert uri_toggle and "output_toggleable.mp4" in uri_toggle
+
+    uri_source = service.get_artifact_gcs_uri(job_id, "source_video")
+    assert uri_source and "source_video.mp4" in uri_source
+
+    uri_vtt = service.get_artifact_gcs_uri(job_id, "vtt")
+    assert uri_vtt and "subtitles.vtt" in uri_vtt
+
+    uri_srt = service.get_artifact_gcs_uri(job_id, "srt")
+    assert uri_srt and "subtitles.srt" in uri_srt
+
+
+def test_controller_download_zip_redirect_and_source_file(api_client):
+    """Tests download controller ZIP redirect and source_video fallback."""
+    dto = SubtitleResponseDTO(
+        job_id="sub_zip_123",
+        status="completed",
+    )
+    with (
+        patch("src.custom.subtitles.subtitle_controller.subtitle_service.get_job_status", return_value=dto),
+        patch("src.custom.subtitles.subtitle_controller.subtitle_service.get_artifact_signed_url", return_value="https://storage.googleapis.com/signed_pkg.zip"),
+    ):
+        res = api_client.get(
+            "/api/v1/custom/subtitles/download/sub_zip_123?file_type=zip",
+            follow_redirects=False,
+        )
+        assert res.status_code == 307
+        assert res.headers["location"] == "https://storage.googleapis.com/signed_pkg.zip"
+
+
+def test_get_job_status_completed_enrichment_toggleable():
+    """Tests get_job_status populates signed URLs for toggleable video on completion."""
+    service = SubtitleService()
+    job_id = service.create_job()
+    job = service.get_job_status(job_id)
+    job.status = "completed"
+    job.burn_subtitles = False
+    service._save_job_state(job_id, job)
+
+    with patch.object(service, "get_artifact_signed_url", return_value="https://signed.url/item"):
+        enriched = service.get_job_status(job_id)
+        assert enriched.status == "completed"
+        assert enriched.processed_video_url == "https://signed.url/item"
+        assert enriched.default_toggleable_video == "https://signed.url/item"
 
