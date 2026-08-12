@@ -29,6 +29,8 @@ export interface SubtitleResponse {
   error_message?: string;
   default_toggleable_video?: string;
   burned_in_video?: string;
+  source_video_path?: string;
+  source_video_url?: string;
   subtitles_vtt?: string;
   subtitles_srt?: string;
   segment_count?: number;
