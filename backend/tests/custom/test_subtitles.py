@@ -1897,3 +1897,52 @@ def test_controller_save_to_gallery_exception(api_client):
         assert "Database connection lost" in response.json()["detail"]
 
 
+def test_get_artifact_file_direct_gs_download(tmp_path):
+    """Tests get_artifact_file downloading a direct gs:// URI."""
+    service = SubtitleService()
+    job_id = "sub_gs_dl"
+    job = SubtitleResponseDTO(
+        job_id=job_id,
+        status="completed",
+        burned_in_video="gs://test-bucket/subtitles_outputs/sub_gs_dl/output_burned_in.mp4",
+    )
+    service.jobs[job_id] = job
+
+    mock_blob = MagicMock()
+    mock_blob.exists.return_value = True
+    def fake_download(dest):
+        with open(dest, "wb") as f:
+            f.write(b"video-bytes")
+    mock_blob.download_to_filename.side_effect = fake_download
+
+    mock_bucket = MagicMock()
+    mock_bucket.blob.return_value = mock_blob
+    service.engine.storage_client = MagicMock()
+    service.engine.storage_client.bucket.return_value = mock_bucket
+
+    path = service.get_artifact_file(job_id, "burned_in_video")
+    assert path is not None
+    assert os.path.exists(path)
+
+
+def test_get_artifact_signed_url_iam_signer():
+    """Tests get_artifact_signed_url generating presigned URLs via IamSignerCredentials."""
+    service = SubtitleService()
+    job_id = "sub_iam_1"
+    job = SubtitleResponseDTO(
+        job_id=job_id,
+        status="completed",
+        burned_in_video="gs://test-bucket/subtitles_outputs/sub_iam_1/output_burned_in.mp4",
+    )
+    service.jobs[job_id] = job
+
+    with patch(
+        "src.auth.iam_signer_credentials_service.IamSignerCredentials.generate_presigned_url",
+        return_value="https://storage.googleapis.com/test-bucket/subtitles_outputs/sub_iam_1/output_burned_in.mp4?signature=xyz",
+    ):
+        url = service.get_artifact_signed_url(job_id, "burned_in_video")
+        assert url is not None
+        assert url.startswith("https://")
+
+
+

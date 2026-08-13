@@ -1041,54 +1041,45 @@ class SubtitleService:
                 progress_callback=update_progress,
             )
 
-            job.status = "completed"
-            job.step = "completed"
-            job.progress = 100
-            job.subtitles_vtt = result.get("subtitles_vtt")
-            job.subtitles_srt = result.get("subtitles_srt")
-            job.default_toggleable_video = result.get(
-                "default_toggleable_video"
+            job.step = "packaging"
+            job.progress = 90
+            self._save_job_state(job_id, job)
+
+            vtt_local = result.get("subtitles_vtt")
+            srt_local = result.get("subtitles_srt")
+            toggle_local = result.get("default_toggleable_video")
+            burned_local = result.get("burned_in_video")
+            thumb_local = result.get("thumbnail_jpg")
+
+            # Persist output files to GCS and record canonical GCS URIs in job state
+            vtt_gcs = self._upload_artifact_to_gcs(job_id, vtt_local)
+            srt_gcs = self._upload_artifact_to_gcs(job_id, srt_local)
+            toggle_gcs = self._upload_artifact_to_gcs(job_id, toggle_local)
+            burned_gcs = (
+                self._upload_artifact_to_gcs(job_id, burned_local)
+                if burned_local
+                else None
             )
-            job.burned_in_video = result.get("burned_in_video")
+            self._upload_artifact_to_gcs(job_id, thumb_local)
+
+            job.subtitles_vtt = vtt_gcs or vtt_local
+            job.subtitle_url = vtt_gcs or vtt_local
+            job.subtitles_srt = srt_gcs or srt_local
+            job.default_toggleable_video = toggle_gcs or toggle_local
+            job.burned_in_video = burned_gcs or burned_local
             job.segment_count = result.get("segment_count", 0)
             job.transcript_text = result.get("transcript_text", "")
             job.local_output_dir = os.path.abspath(job_dir)
-            job.subtitle_url = result.get("subtitles_vtt")
             job.processed_video_url = (
-                result.get("burned_in_video")
+                (burned_gcs or burned_local)
                 if job.burn_subtitles
-                else result.get("default_toggleable_video")
+                else (toggle_gcs or toggle_local)
             )
 
-            # Persist output files to GCS and record canonical GCS URIs in job state
-            vtt_gcs = self._upload_artifact_to_gcs(job_id, job.subtitles_vtt)
-            srt_gcs = self._upload_artifact_to_gcs(job_id, job.subtitles_srt)
-            toggle_gcs = self._upload_artifact_to_gcs(
-                job_id, job.default_toggleable_video
-            )
-            burned_gcs = self._upload_artifact_to_gcs(
-                job_id, job.burned_in_video
-            )
-            self._upload_artifact_to_gcs(job_id, result.get("thumbnail_jpg"))
-
-            if vtt_gcs:
-                job.subtitles_vtt = vtt_gcs
-                job.subtitle_url = vtt_gcs
-            if srt_gcs:
-                job.subtitles_srt = srt_gcs
-            if toggle_gcs:
-                job.default_toggleable_video = toggle_gcs
-            if burned_gcs:
-                job.burned_in_video = burned_gcs
-
-            if burned_gcs and job.burn_subtitles:
-                job.processed_video_url = burned_gcs
-            elif toggle_gcs:
-                job.processed_video_url = toggle_gcs
-            elif burned_gcs:
-                job.processed_video_url = burned_gcs
-            elif vtt_gcs:
-                job.processed_video_url = vtt_gcs
+            # Mark fully completed only after all artifacts are reliably uploaded
+            job.status = "completed"
+            job.step = "completed"
+            job.progress = 100
 
         except Exception as e:
             logger.error(
@@ -1619,7 +1610,7 @@ class SubtitleService:
         elif file_type in ("source_video", "source"):
             file_path = status_dto.source_video_path
 
-        if file_path and os.path.exists(file_path):
+        if file_path and not file_path.startswith("gs://") and os.path.exists(file_path):
             return file_path
 
         # Attempt to retrieve from GCS
@@ -1631,6 +1622,26 @@ class SubtitleService:
                 or os.getenv("GENMEDIA_BUCKET")
                 or self.engine.gcs_bucket_name
             )
+
+            # If file_path is already a direct gs:// URI, download that specific object
+            if file_path and file_path.startswith("gs://"):
+                try:
+                    parts = file_path.replace("gs://", "").split("/", 1)
+                    target_bucket = parts[0]
+                    target_blob = parts[1] if len(parts) > 1 else ""
+                    dest_dir = f"/tmp/subtitles_outputs/{job_id}"
+                    os.makedirs(dest_dir, exist_ok=True)
+                    dest_path = os.path.join(dest_dir, os.path.basename(target_blob))
+                    if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
+                        return dest_path
+                    b = self.engine.storage_client.bucket(target_bucket)
+                    blob_obj = b.blob(target_blob)
+                    if blob_obj.exists():
+                        blob_obj.download_to_filename(dest_path)
+                        return dest_path
+                except Exception as e:
+                    logger.debug(f"Direct gs artifact download failed: {e}")
+
             bucket = self.engine.storage_client.bucket(bucket_name)
             blobs = list(
                 bucket.list_blobs(prefix=f"subtitles_outputs/{job_id}/")
@@ -1752,57 +1763,49 @@ class SubtitleService:
                 on_operation_started=on_op_started,
             )
 
-            job.status = "completed"
-            job.step = "completed"
-            job.progress = 100
-            job.subtitles_vtt = result.get("subtitles_vtt")
-            job.subtitles_srt = result.get("subtitles_srt")
-            job.default_toggleable_video = result.get(
-                "default_toggleable_video"
+            job.step = "packaging"
+            job.progress = 90
+            self._save_job_state(job_id, job)
+
+            vtt_local = result.get("subtitles_vtt")
+            srt_local = result.get("subtitles_srt")
+            toggle_local = result.get("default_toggleable_video")
+            burned_local = result.get("burned_in_video")
+            thumb_local = result.get("thumbnail_jpg")
+
+            # Persist output files to GCS and record canonical GCS URIs
+            vtt_gcs = self._upload_artifact_to_gcs(job_id, vtt_local)
+            srt_gcs = self._upload_artifact_to_gcs(job_id, srt_local)
+            toggle_gcs = self._upload_artifact_to_gcs(job_id, toggle_local)
+            burned_gcs = (
+                self._upload_artifact_to_gcs(job_id, burned_local)
+                if burned_local
+                else None
             )
-            job.burned_in_video = result.get("burned_in_video")
+            self._upload_artifact_to_gcs(job_id, thumb_local)
+
+            job.subtitles_vtt = vtt_gcs or vtt_local
+            job.subtitle_url = (
+                (vtt_gcs or vtt_local)
+                if output_format == "vtt"
+                else (srt_gcs or srt_local)
+            )
+            job.subtitles_srt = srt_gcs or srt_local
+            job.default_toggleable_video = toggle_gcs or toggle_local
+            job.burned_in_video = burned_gcs or burned_local
             job.segment_count = result.get("segment_count", 0)
             job.transcript_text = result.get("transcript_text", "")
             job.local_output_dir = os.path.abspath(job_dir)
-            job.subtitle_url = (
-                result.get("subtitles_vtt")
-                if output_format == "vtt"
-                else result.get("subtitles_srt")
-            )
             job.processed_video_url = (
-                result.get("burned_in_video")
+                (burned_gcs or burned_local)
                 if burn_subtitles
-                else result.get("default_toggleable_video")
+                else (toggle_gcs or toggle_local)
             )
 
-            # Persist output files to GCS and record canonical GCS URIs
-            vtt_gcs = self._upload_artifact_to_gcs(job_id, job.subtitles_vtt)
-            srt_gcs = self._upload_artifact_to_gcs(job_id, job.subtitles_srt)
-            toggle_gcs = self._upload_artifact_to_gcs(
-                job_id, job.default_toggleable_video
-            )
-            burned_gcs = self._upload_artifact_to_gcs(
-                job_id, job.burned_in_video
-            )
-
-            if vtt_gcs:
-                job.subtitles_vtt = vtt_gcs
-                job.subtitle_url = vtt_gcs
-            if srt_gcs:
-                job.subtitles_srt = srt_gcs
-            if toggle_gcs:
-                job.default_toggleable_video = toggle_gcs
-            if burned_gcs:
-                job.burned_in_video = burned_gcs
-
-            if burned_gcs and burn_subtitles:
-                job.processed_video_url = burned_gcs
-            elif toggle_gcs:
-                job.processed_video_url = toggle_gcs
-            elif burned_gcs:
-                job.processed_video_url = burned_gcs
-            elif vtt_gcs:
-                job.processed_video_url = vtt_gcs
+            # Mark fully completed only after all uploads are done
+            job.status = "completed"
+            job.step = "completed"
+            job.progress = 100
 
         except Exception as e:
             logger.error(f"Subtitle job {job_id} failed: {e}", exc_info=True)

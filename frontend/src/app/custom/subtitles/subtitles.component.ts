@@ -678,6 +678,14 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
         'burned_in_video',
       );
       this.subtitledVideoPreviewUrl.set(fallbackUrl);
+      setTimeout(() => {
+        if (
+          isPlatformBrowser(this.platformId) &&
+          this.burnedVideoPlayerRef?.nativeElement
+        ) {
+          this.burnedVideoPlayerRef.nativeElement.load();
+        }
+      }, 50);
     } else {
       console.warn('Burned video stream error event received:', event);
     }
@@ -700,6 +708,14 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
         'source_video',
       );
       this.sourceVideoPreviewUrl.set(fallbackUrl);
+      setTimeout(() => {
+        if (
+          isPlatformBrowser(this.platformId) &&
+          this.sourceVideoPlayerRef?.nativeElement
+        ) {
+          this.sourceVideoPlayerRef.nativeElement.load();
+        }
+      }, 50);
     } else {
       console.warn('Source video stream error event received:', event);
     }
