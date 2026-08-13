@@ -39,8 +39,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Update package lists and install ffmpeg
-RUN apt-get update && apt-get install -y ffmpeg
+# Update package lists and install ffmpeg and font packages for subtitle burning
+RUN apt-get update && apt-get install -y ffmpeg fontconfig fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
 
 # Reset the entrypoint, don't invoke `uv`
 ENTRYPOINT []

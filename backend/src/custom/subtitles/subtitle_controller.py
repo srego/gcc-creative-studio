@@ -369,7 +369,25 @@ async def download_output_file(
             )
             if resolved_file and os.path.exists(resolved_file):
                 file_path = resolved_file
-            else:
+            elif file_type == "burned_in_video":
+                # Gracefully fallback to toggleable or source video if burned video is not present
+                for alt_type in ("toggleable_video", "source_video"):
+                    alt_signed = subtitle_service.get_artifact_signed_url(
+                        job_id, alt_type, for_download=True
+                    )
+                    if alt_signed:
+                        return RedirectResponse(
+                            url=alt_signed,
+                            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+                        )
+                    alt_file = subtitle_service.get_artifact_file(
+                        job_id, alt_type
+                    )
+                    if alt_file and os.path.exists(alt_file):
+                        file_path = alt_file
+                        break
+
+            if not file_path or not os.path.exists(file_path):
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Requested file type '{file_type}' is not available for job {job_id}.",

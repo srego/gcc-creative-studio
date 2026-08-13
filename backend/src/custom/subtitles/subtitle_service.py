@@ -768,15 +768,27 @@ Word timing data:
             logger.warning(f"Could not write transcript.json: {e}")
 
         if generate_burned_in and burned_in_video_path:
-            self.burn_subtitles_ffmpeg(
-                video_path, vtt_path, burned_in_video_path
-            )
+            try:
+                # Prefer SRT for hardsubbing due to universal libass compatibility
+                burn_sub_source = srt_path if os.path.exists(srt_path) else vtt_path
+                self.burn_subtitles_ffmpeg(
+                    video_path, burn_sub_source, burned_in_video_path
+                )
+            except Exception as e:
+                logger.warning(
+                    f"FFmpeg hardburning failed, falling back to toggleable video: {e}"
+                )
+                burned_in_video_path = None
 
         # Extract a preview thumbnail frame
         thumbnail_path = os.path.join(job_dir, "thumbnail.jpg")
         preview_video = (
             burned_in_video_path
-            if (generate_burned_in and os.path.exists(burned_in_video_path))
+            if (
+                generate_burned_in
+                and burned_in_video_path
+                and os.path.exists(burned_in_video_path)
+            )
             else video_path
         )
         self.generate_thumbnail(preview_video, thumbnail_path)
@@ -1524,21 +1536,18 @@ class SubtitleService:
                 e,
             )
 
-        # 3. Predict standard GCS path
-        if file_type in ("burned_in_video", "burned"):
-            return f"gs://{bucket_name}/subtitles_outputs/{job_id}/output_burned_in.mp4"
-        elif file_type in ("toggleable_video", "toggleable"):
-            return f"gs://{bucket_name}/subtitles_outputs/{job_id}/output_toggleable.mp4"
-        elif file_type in ("source_video", "source"):
-            return f"gs://{bucket_name}/subtitles_outputs/{job_id}/source_video.mp4"
-        elif file_type == "vtt":
-            return (
-                f"gs://{bucket_name}/subtitles_outputs/{job_id}/subtitles.vtt"
-            )
-        elif file_type == "srt":
-            return (
-                f"gs://{bucket_name}/subtitles_outputs/{job_id}/subtitles.srt"
-            )
+        # 3. Predict standard GCS path only as fallback if storage_client is not initialized
+        if not self.engine.storage_client:
+            if file_type in ("burned_in_video", "burned"):
+                return f"gs://{bucket_name}/subtitles_outputs/{job_id}/output_burned_in.mp4"
+            elif file_type in ("toggleable_video", "toggleable"):
+                return f"gs://{bucket_name}/subtitles_outputs/{job_id}/output_toggleable.mp4"
+            elif file_type in ("source_video", "source"):
+                return f"gs://{bucket_name}/subtitles_outputs/{job_id}/source_video.mp4"
+            elif file_type == "vtt":
+                return f"gs://{bucket_name}/subtitles_outputs/{job_id}/subtitles.vtt"
+            elif file_type == "srt":
+                return f"gs://{bucket_name}/subtitles_outputs/{job_id}/subtitles.srt"
 
         return None
 

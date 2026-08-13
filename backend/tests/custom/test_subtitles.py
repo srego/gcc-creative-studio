@@ -1830,3 +1830,50 @@ def test_process_job_gcs_persistence_and_enrichment(tmp_path):
         assert res.subtitles_srt == "gs://bucket/uploaded_file"
         assert res.burned_in_video == "gs://bucket/uploaded_file"
         assert res.processed_video_url == "gs://bucket/uploaded_file"
+
+
+@pytest.mark.asyncio
+async def test_controller_download_burned_fallback_to_toggleable(tmp_path):
+    """Tests controller download endpoint fallback from missing burned video to toggleable/source video."""
+    from src.custom.subtitles.subtitle_controller import download_output_file
+    from src.custom.subtitles.subtitle_service import subtitle_service
+
+    job_id = subtitle_service.create_job()
+    job = subtitle_service.get_job_status(job_id)
+    toggle_file = tmp_path / "output_toggleable.mp4"
+    toggle_file.write_bytes(b"toggle-content")
+    job.default_toggleable_video = str(toggle_file)
+    job.burned_in_video = None
+    job.status = "completed"
+    subtitle_service._save_job_state(job_id, job)
+
+    with patch.object(subtitle_service, "get_artifact_signed_url", return_value=None):
+        resp = await download_output_file(job_id=job_id, file_type="burned_in_video")
+        assert resp is not None
+        assert getattr(resp, "path", None) == str(toggle_file)
+
+
+def test_finalize_downstream_burning_fallback(tmp_path):
+    """Tests finalize_downstream when hardburning fails and cleanly recovers."""
+    service = SubtitleService()
+    job_dir = tmp_path / "job_burn_fallback"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    video = job_dir / "vid.mp4"
+    video.write_bytes(b"dummy")
+
+    with (
+        patch.object(service.engine, "refine_gemini36", return_value=[{"start": 0.0, "end": 1.0, "text": "Hi"}]),
+        patch.object(service.engine, "export_vtt_srt"),
+        patch.object(service.engine, "embed_soft_subtitles_ffmpeg"),
+        patch.object(service.engine, "generate_thumbnail"),
+        patch.object(service.engine, "burn_subtitles_ffmpeg", side_effect=RuntimeError("FFmpeg test failure")),
+    ):
+        res = service.engine.finalize_downstream(
+            raw_asr={"full_text": "Hi", "words": []},
+            video_path=str(video),
+            job_dir=str(job_dir),
+            generate_burned_in=True,
+        )
+        assert res["burned_in_video"] is None
+        assert res["default_toggleable_video"] is not None
+
