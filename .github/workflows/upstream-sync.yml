@@ -1,0 +1,116 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Automated Upstream Sync
+
+on:
+  schedule:
+    # Run weekly on Mondays at 08:00 UTC
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+    inputs:
+      upstream_branch:
+        description: 'Upstream branch to pull from'
+        required: true
+        default: 'main'
+      target_branch:
+        description: 'Target branch in this repo to update'
+        required: true
+        default: 'develop'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-and-sync-upstream:
+    name: Check & Sync from Upstream
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch || 'develop' }}
+          fetch-depth: 0
+
+      - name: Configure Git Identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Setup Upstream Remote
+        run: |
+          git remote add upstream https://github.com/GoogleCloudPlatform/gcc-creative-studio.git || true
+          git fetch upstream ${{ github.event.inputs.upstream_branch || 'main' }}
+
+      - name: Check for New Upstream Commits
+        id: check_upstream
+        run: |
+          UPSTREAM_REF="upstream/${{ github.event.inputs.upstream_branch || 'main' }}"
+          BASE_REF="${{ github.event.inputs.target_branch || 'develop' }}"
+          MERGE_BASE=$(git merge-base "$BASE_REF" "$UPSTREAM_REF")
+          NEW_COMMITS=$(git rev-list --count "${MERGE_BASE}..${UPSTREAM_REF}")
+          echo "new_commits_count=${NEW_COMMITS}" >> "$GITHUB_OUTPUT"
+          echo "Found ${NEW_COMMITS} new commits in upstream."
+
+      - name: Setup Python & uv
+        if: steps.check_upstream.outputs.new_commits_count > 0
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        if: steps.check_upstream.outputs.new_commits_count > 0
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'backend/uv.lock'
+
+      - name: Create Sync Branch & Merge Upstream
+        if: steps.check_upstream.outputs.new_commits_count > 0
+        id: perform_merge
+        run: |
+          SYNC_BRANCH="sync/upstream-$(date +%Y%m%d-%H%M%S)"
+          git checkout -b "$SYNC_BRANCH"
+          git merge --no-ff "upstream/${{ github.event.inputs.upstream_branch || 'main' }}" -m "chore(sync): automated sync from upstream/${{ github.event.inputs.upstream_branch || 'main' }}"
+          echo "sync_branch=${SYNC_BRANCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Custom Backend Suite
+        if: steps.check_upstream.outputs.new_commits_count > 0
+        run: |
+          cd backend
+          uv sync --all-extras
+          uv run pytest tests/custom -v --cov=src/custom --cov-fail-under=80
+
+      - name: Push Sync Branch & Open PR
+        if: steps.check_upstream.outputs.new_commits_count > 0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SYNC_BRANCH: ${{ steps.perform_merge.outputs.sync_branch }}
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch || 'develop' }}
+        run: |
+          git push origin "$SYNC_BRANCH"
+          gh pr create \
+            --base "$TARGET_BRANCH" \
+            --head "$SYNC_BRANCH" \
+            --title "chore(sync): Upstream Sync ($(date +%Y-%m-%d))" \
+            --body "### 🔄 Automated Upstream Sync
+          
+          This automated Pull Request merges the latest updates from \`GoogleCloudPlatform/gcc-creative-studio:${{ github.event.inputs.upstream_branch || 'main' }}\` into \`${TARGET_BRANCH}\`.
+          
+          **Automated Checks:**
+          - ✅ Backend Custom Test Suite passed with >= 80% coverage.
+          
+          Please review the diff and approve to merge."
