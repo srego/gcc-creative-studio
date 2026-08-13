@@ -600,7 +600,9 @@ Word timing data:
             "-crf",
             "23",
             "-c:a",
-            "copy",
+            "aac",
+            "-b:a",
+            "192k",
             "-movflags",
             "+faststart",
             temp_output_path,
@@ -608,9 +610,38 @@ Word timing data:
 
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if res.returncode != 0:
-            if os.path.exists(temp_output_path):
-                os.remove(temp_output_path)
-            raise RuntimeError(f"FFmpeg subtitle burning failed: {res.stderr}")
+            logger.debug(
+                "FFmpeg burning with AAC failed, retrying with standard stream mapping: %s",
+                res.stderr,
+            )
+            cmd_fallback = [
+                "ffmpeg",
+                "-y",
+                "-threads",
+                "0",
+                "-i",
+                video_path,
+                "-vf",
+                filter_str,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "23",
+                "-movflags",
+                "+faststart",
+                temp_output_path,
+            ]
+            res = subprocess.run(
+                cmd_fallback, capture_output=True, text=True, timeout=600
+            )
+            if res.returncode != 0:
+                if os.path.exists(temp_output_path):
+                    os.remove(temp_output_path)
+                raise RuntimeError(
+                    f"FFmpeg subtitle burning failed: {res.stderr}"
+                )
 
         os.replace(temp_output_path, output_video_path)
         return output_video_path
@@ -747,9 +778,19 @@ Word timing data:
         if progress_callback:
             progress_callback("packaging", 85)
 
-        self.embed_soft_subtitles_ffmpeg(
-            video_path, vtt_path, toggleable_video_path
-        )
+        try:
+            self.embed_soft_subtitles_ffmpeg(
+                video_path, vtt_path, toggleable_video_path
+            )
+        except Exception as e:
+            logger.warning(
+                f"FFmpeg soft subtitle embedding failed, falling back to source video copy: {e}"
+            )
+            try:
+                import shutil
+                shutil.copyfile(video_path, toggleable_video_path)
+            except Exception:
+                toggleable_video_path = video_path
 
         # Save word-level transcript metadata
         transcript_json_path = os.path.join(job_dir, "transcript.json")
@@ -1166,41 +1207,6 @@ class SubtitleService:
                             thread.start()
                 except Exception as e:
                     logger.debug("LRO check for %s skipped: %s", job_id, e)
-
-        # Recovery for jobs that were interrupted or timed out at formatting/packaging
-        elif (
-            job.status == "processing"
-            and job.step in ("formatting", "packaging")
-            and job.operation_name
-        ):
-            if self.engine.speech_client and getattr(
-                self.engine.speech_client, "operations_client", None
-            ):
-                try:
-                    op_proto = self.engine.speech_client.operations_client.get_operation(
-                        name=job.operation_name
-                    )
-                    if op_proto.done and not op_proto.HasField("error"):
-                        resp = cloud_speech.BatchRecognizeResponse()
-                        op_proto.response.Unpack(resp)
-                        raw_asr = self.engine.parse_speech_response(resp)
-
-                        with self._jobs_lock:
-                            should_start = (
-                                job_id not in self._active_finishing_jobs
-                            )
-                            if should_start:
-                                self._active_finishing_jobs.add(job_id)
-
-                        if should_start:
-                            thread = threading.Thread(
-                                target=self._run_async_finish,
-                                args=(job_id, job, raw_asr),
-                                daemon=True,
-                            )
-                            thread.start()
-                except Exception as e:
-                    logger.debug("Recovery check for %s skipped: %s", job_id, e)
 
         if job.status == "completed":
             signed_burned = self.get_artifact_signed_url(

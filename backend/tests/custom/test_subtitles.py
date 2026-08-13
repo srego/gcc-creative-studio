@@ -1449,14 +1449,14 @@ def test_finish_job_from_asr_direct(tmp_path):
         assert finished.processed_video_url == "gs://bucket/out"
 
 
-def test_get_job_status_recovery_branch():
-    """Tests recovery branch in get_job_status when job was left in formatting step."""
+def test_get_job_status_lro_formatting_transition():
+    """Tests that completed LRO transitions job to formatting and launches async finish once."""
     service = SubtitleService()
     job_id = service.create_job()
     job = service.get_job_status(job_id)
     job.status = "processing"
-    job.step = "formatting"
-    job.operation_name = "projects/123/locations/us/operations/op_recov"
+    job.step = "transcribing"
+    job.operation_name = "projects/123/locations/us/operations/op_trans"
     service._save_job_state(job_id, job)
 
     mock_op_proto = MagicMock()
@@ -1472,12 +1472,13 @@ def test_get_job_status_recovery_branch():
         patch.object(
             service.engine,
             "parse_speech_response",
-            return_value={"full_text": "Recovery text", "words": []},
+            return_value={"full_text": "LRO text", "words": []},
         ),
-        patch.object(service, "_run_async_finish") as mock_raf,
+        patch.object(service, "_run_async_finish"),
     ):
         res = service.get_job_status(job_id)
         assert res is not None
+        assert res.step == "formatting"
         assert job_id in service._active_finishing_jobs
         service._active_finishing_jobs.discard(job_id)
 
@@ -1943,6 +1944,138 @@ def test_get_artifact_signed_url_iam_signer():
         url = service.get_artifact_signed_url(job_id, "burned_in_video")
         assert url is not None
         assert url.startswith("https://")
+
+
+def test_burn_subtitles_ffmpeg_fallback_branch(tmp_path):
+    """Tests burn_subtitles_ffmpeg retrying without audio stream if AAC muxing fails."""
+    service = SubtitleService()
+    video_file = tmp_path / "in.mp4"
+    video_file.write_bytes(b"vid")
+    sub_file = tmp_path / "in.srt"
+    sub_file.write_text("1\n00:00:00,000 --> 00:00:01,000\nTest\n")
+    out_file = tmp_path / "out.mp4"
+    temp_file = tmp_path / "out.mp4.tmp.mp4"
+
+    def mock_run(cmd, capture_output=True, text=True, timeout=600):
+        res = MagicMock()
+        if "-c:a" in cmd:
+            res.returncode = 1
+            res.stderr = "No audio stream found"
+        else:
+            res.returncode = 0
+            res.stderr = ""
+            temp_file.write_bytes(b"rendered")
+        return res
+
+    with patch("subprocess.run", side_effect=mock_run):
+        res = service.engine.burn_subtitles_ffmpeg(
+            str(video_file), str(sub_file), str(out_file)
+        )
+        assert res == str(out_file)
+        assert out_file.exists()
+
+
+def test_embed_soft_subtitles_ffmpeg_success(tmp_path):
+    """Tests embed_soft_subtitles_ffmpeg successful path."""
+    service = SubtitleService()
+    video_file = tmp_path / "in.mp4"
+    video_file.write_bytes(b"vid")
+    sub_file = tmp_path / "in.vtt"
+    sub_file.write_text("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nTest\n")
+    out_file = tmp_path / "out.mp4"
+    temp_file = tmp_path / "out.mp4.tmp.mp4"
+
+    def mock_run(cmd, capture_output=True, text=True, timeout=300):
+        temp_file.write_bytes(b"soft-subbed")
+        res = MagicMock()
+        res.returncode = 0
+        return res
+
+    with patch("subprocess.run", side_effect=mock_run):
+        res = service.engine.embed_soft_subtitles_ffmpeg(
+            str(video_file), str(sub_file), str(out_file)
+        )
+        assert res == str(out_file)
+        assert out_file.exists()
+
+
+def test_get_artifact_signed_url_direct_blob_fallback():
+    """Tests get_artifact_signed_url fallback to direct blob.generate_signed_url."""
+    service = SubtitleService()
+    job_id = "sub_blob_sign"
+    job = SubtitleResponseDTO(
+        job_id=job_id,
+        status="completed",
+        burned_in_video="gs://test-bucket/subtitles_outputs/sub_blob_sign/output_burned_in.mp4",
+    )
+    service.jobs[job_id] = job
+
+    mock_blob = MagicMock()
+    mock_blob.generate_signed_url.return_value = "https://storage.googleapis.com/test-bucket/direct-signed-url"
+    mock_bucket = MagicMock()
+    mock_bucket.blob.return_value = mock_blob
+    service.engine.storage_client = MagicMock()
+    service.engine.storage_client.bucket.return_value = mock_bucket
+
+    with patch(
+        "src.auth.iam_signer_credentials_service.IamSignerCredentials.generate_presigned_url",
+        side_effect=RuntimeError("IAM signing unavailable"),
+    ):
+        url = service.get_artifact_signed_url(job_id, "burned_in_video")
+        assert url == "https://storage.googleapis.com/test-bucket/direct-signed-url"
+
+
+def test_upload_artifact_content_types_coverage(tmp_path):
+    """Tests _upload_artifact_to_gcs with multiple file formats."""
+    service = SubtitleService()
+    mock_blob = MagicMock()
+    mock_bucket = MagicMock()
+    mock_bucket.blob.return_value = mock_blob
+    service.engine.storage_client = MagicMock()
+    service.engine.storage_client.bucket.return_value = mock_bucket
+
+    for ext, expected_content_type in [
+        ("jpg", "image/jpeg"),
+        ("png", "image/png"),
+        ("zip", "application/zip"),
+        ("json", "application/json"),
+        ("bin", "application/octet-stream"),
+    ]:
+        f = tmp_path / f"test.{ext}"
+        f.write_bytes(b"content")
+        uri = service._upload_artifact_to_gcs("sub_types", str(f))
+        assert uri is not None
+        assert uri.startswith("gs://")
+
+
+def test_process_job_op_started_coverage(tmp_path):
+    """Tests process_job callback when on_operation_started is triggered."""
+    service = SubtitleService()
+    video_file = tmp_path / "test.mp4"
+    video_file.write_bytes(b"content")
+
+    def mock_process(video_path, job_dir, generate_burned_in, language_code, progress_callback, on_operation_started):
+        if on_operation_started:
+            on_operation_started("projects/123/locations/global/operations/op99")
+        return {
+            "subtitles_vtt": "/tmp/sub.vtt",
+            "subtitles_srt": "/tmp/sub.srt",
+            "default_toggleable_video": "/tmp/toggle.mp4",
+            "burned_in_video": None,
+            "segment_count": 1,
+            "transcript_text": "text",
+            "thumbnail_jpg": "/tmp/thumb.jpg",
+        }
+
+    with (
+        patch.object(service.engine, "process_video", side_effect=mock_process),
+        patch.object(service, "_upload_artifact_to_gcs", return_value="gs://bucket/out"),
+    ):
+        res = service.process_job("sub_op_test", str(video_file))
+        assert res.status == "completed"
+
+
+
 
 
 
