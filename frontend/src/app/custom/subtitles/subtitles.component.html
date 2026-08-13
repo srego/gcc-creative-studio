@@ -391,6 +391,7 @@
 
             <div class="aspect-video w-full bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 relative flex items-center justify-center shadow-inner group">
               <video
+                #sourceVideoPlayer
                 *ngIf="sourceVideoPreviewUrl()"
                 [src]="sourceVideoPreviewUrl()"
                 controls
@@ -432,12 +433,12 @@
 
             <div class="aspect-video w-full bg-neutral-950 rounded-xl overflow-hidden border border-purple-500/30 relative flex items-center justify-center shadow-lg shadow-purple-950/30 group">
               <video
+                #burnedVideoPlayer
                 *ngIf="subtitledVideoPreviewUrl()"
                 [src]="subtitledVideoPreviewUrl()"
                 controls
                 playsinline
-                preload="metadata"
-                crossorigin="anonymous"
+                preload="auto"
                 (error)="onBurnedVideoError($event)"
                 class="w-full h-full object-contain"
               ></video>
@@ -547,7 +548,7 @@
                   <span>Saved <strong>"{{ savedPackageName() }}"</strong> to Gallery with {{ savedItemsCount() }} deliverables attached!</span>
                 </div>
                 <a
-                  routerLink="/gallery"
+                  [routerLink]="savedAssetId() ? ['/gallery', savedAssetId()] : ['/gallery']"
                   class="px-2.5 py-1 rounded-lg bg-teal-600 hover:bg-teal-500 text-white font-semibold text-[11px] transition-colors inline-flex items-center gap-1 shadow-sm shrink-0"
                 >
                   <span>View in Gallery</span>

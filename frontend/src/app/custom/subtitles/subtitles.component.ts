@@ -26,6 +26,8 @@ import {
   Inject,
   DestroyRef,
   inject,
+  ViewChild,
+  ElementRef,
 } from '@angular/core';
 import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
 import {MatDialog} from '@angular/material/dialog';
@@ -54,6 +56,11 @@ export type SubtitleStep =
 })
 export class SubtitlesComponent implements OnInit, OnDestroy {
   private destroyRef = inject(DestroyRef);
+
+  @ViewChild('burnedVideoPlayer')
+  burnedVideoPlayerRef?: ElementRef<HTMLVideoElement>;
+  @ViewChild('sourceVideoPlayer')
+  sourceVideoPlayerRef?: ElementRef<HTMLVideoElement>;
 
   constructor(
     private dialog: MatDialog,
@@ -634,6 +641,17 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
             : this.subtitlesService.getDownloadUrl(res.job_id, 'source_video');
         this.sourceVideoPreviewUrl.set(sourceUrl);
       }
+
+      setTimeout(() => {
+        if (isPlatformBrowser(this.platformId)) {
+          if (this.burnedVideoPlayerRef?.nativeElement) {
+            this.burnedVideoPlayerRef.nativeElement.load();
+          }
+          if (this.sourceVideoPlayerRef?.nativeElement) {
+            this.sourceVideoPlayerRef.nativeElement.load();
+          }
+        }
+      }, 50);
     }
   }
 

@@ -1462,6 +1462,12 @@ class SubtitleService:
                             prefix=f"subtitles_packages/{job_id}/"
                         )
                     )
+                if not blobs:
+                    blobs = list(
+                        bucket.list_blobs(
+                            prefix=f"subtitles_uploads/{job_id}/"
+                        )
+                    )
 
                 for blob in blobs:
                     filename = os.path.basename(blob.name)
@@ -2015,6 +2021,13 @@ class SubtitleService:
             source_gcs = self.get_artifact_gcs_uri(job_id, "source_video")
 
         if not source_gcs:
+            source_local = self.get_artifact_file(job_id, "source_video")
+            if source_local and os.path.exists(source_local):
+                source_gcs = self._upload_artifact_to_gcs(
+                    job_id, source_local, target_filename="source_video.mp4"
+                )
+
+        if not source_gcs:
             source_video_path = None
             if (
                 hasattr(job, "local_output_dir")
@@ -2037,7 +2050,7 @@ class SubtitleService:
                     logger.debug(f"Error discovering source video: {e}")
             if source_video_path and os.path.exists(source_video_path):
                 source_gcs = self._upload_artifact_to_gcs(
-                    job_id, source_video_path
+                    job_id, source_video_path, target_filename="source_video.mp4"
                 )
 
         if not source_gcs:

@@ -364,6 +364,15 @@ export class MediaLightboxComponent
           }
         }, 50);
       }
+
+      // If Video, reload the native video element so switching between burned and source plays properly
+      if (this.isVideo) {
+        setTimeout(() => {
+          if (this.videoPlayerRef?.nativeElement) {
+            this.videoPlayerRef.nativeElement.load();
+          }
+        }, 50);
+      }
     }
   }
 
