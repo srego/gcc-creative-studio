@@ -426,33 +426,45 @@ async def save_to_media_gallery(
     db: AsyncSession = Depends(get_db),
 ) -> SaveToGalleryResponseDTO:
     """Registers the complete subtitle package folder into the PostgreSQL database as SourceAssets."""
-    target_workspace_id = (
-        request_dto.workspace_id
-        if request_dto.workspace_id
-        else (current_user.default_workspace_id or 1)
-    )
-    (
-        media_item_id,
-        pkg_name,
-        primary_video_gcs,
-        thumbnail_gcs,
-        items_count,
-        saved_files,
-    ) = await subtitle_service.save_job_to_gallery(
-        job_id=request_dto.job_id,
-        workspace_id=target_workspace_id,
-        user_id=current_user.id,
-        user_email=current_user.email,
-        db=db,
-        title=request_dto.title,
-    )
-    return SaveToGalleryResponseDTO(
-        success=True,
-        asset_id=media_item_id,
-        asset_name=pkg_name,
-        gcs_uri=primary_video_gcs,
-        thumbnail_uri=thumbnail_gcs,
-        saved_items_count=items_count,
-        saved_filenames=saved_files,
-        message=f"Successfully saved {pkg_name} to Media Gallery with {items_count} attached deliverables.",
-    )
+    try:
+        target_workspace_id = (
+            request_dto.workspace_id
+            if request_dto.workspace_id
+            else (current_user.default_workspace_id or 1)
+        )
+        (
+            media_item_id,
+            pkg_name,
+            primary_video_gcs,
+            thumbnail_gcs,
+            items_count,
+            saved_files,
+        ) = await subtitle_service.save_job_to_gallery(
+            job_id=request_dto.job_id,
+            workspace_id=target_workspace_id,
+            user_id=current_user.id,
+            user_email=current_user.email,
+            db=db,
+            title=request_dto.title,
+        )
+        return SaveToGalleryResponseDTO(
+            success=True,
+            asset_id=media_item_id,
+            asset_name=pkg_name,
+            gcs_uri=primary_video_gcs,
+            thumbnail_uri=thumbnail_gcs,
+            saved_items_count=items_count,
+            saved_filenames=saved_files,
+            message=f"Successfully saved {pkg_name} to Media Gallery with {items_count} attached deliverables.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to save subtitle job {request_dto.job_id} to gallery: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save creation to Media Gallery: {str(e)}",
+        ) from e

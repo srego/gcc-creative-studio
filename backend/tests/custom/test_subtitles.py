@@ -913,7 +913,9 @@ async def test_save_job_to_gallery():
     mock_db.add = MagicMock()
     mock_db.commit = AsyncMock()
     mock_db.refresh = AsyncMock()
-    mock_db.execute = AsyncMock()
+    mock_exec_res = MagicMock()
+    mock_exec_res.scalar_one_or_none.return_value = 1
+    mock_db.execute = AsyncMock(return_value=mock_exec_res)
 
     with (
         patch.object(
@@ -1876,4 +1878,22 @@ def test_finalize_downstream_burning_fallback(tmp_path):
         )
         assert res["burned_in_video"] is None
         assert res["default_toggleable_video"] is not None
+
+
+def test_controller_save_to_gallery_exception(api_client):
+    """Tests POST /save-to-gallery 500 handling on unexpected exception."""
+    from src.custom.subtitles.subtitle_service import subtitle_service
+
+    with patch.object(
+        subtitle_service,
+        "save_job_to_gallery",
+        side_effect=RuntimeError("Database connection lost"),
+    ):
+        response = api_client.post(
+            "/api/v1/custom/subtitles/save-to-gallery",
+            json={"job_id": "sub_err_1", "workspace_id": 1, "title": "Fail Test"},
+        )
+        assert response.status_code == 500
+        assert "Database connection lost" in response.json()["detail"]
+
 
