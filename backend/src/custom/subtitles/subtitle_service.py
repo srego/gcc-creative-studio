@@ -1103,6 +1103,17 @@ class SubtitleService:
             )
             self._upload_artifact_to_gcs(job_id, thumb_local)
 
+            source_gcs = None
+            if video_path and video_path.startswith("gs://"):
+                source_gcs = video_path
+            elif video_path and os.path.exists(video_path):
+                source_gcs = self._upload_artifact_to_gcs(
+                    job_id, video_path, target_filename="source_video.mp4"
+                )
+
+            if source_gcs:
+                job.source_video_path = source_gcs
+
             job.subtitles_vtt = vtt_gcs or vtt_local
             job.subtitle_url = vtt_gcs or vtt_local
             job.subtitles_srt = srt_gcs or srt_local
@@ -1790,6 +1801,17 @@ class SubtitleService:
             )
             self._upload_artifact_to_gcs(job_id, thumb_local)
 
+            source_gcs = None
+            if video_path and video_path.startswith("gs://"):
+                source_gcs = video_path
+            elif video_path and os.path.exists(video_path):
+                source_gcs = self._upload_artifact_to_gcs(
+                    job_id, video_path, target_filename="source_video.mp4"
+                )
+
+            if source_gcs:
+                job.source_video_path = source_gcs
+
             job.subtitles_vtt = vtt_gcs or vtt_local
             job.subtitle_url = (
                 (vtt_gcs or vtt_local)
@@ -2075,18 +2097,16 @@ class SubtitleService:
                     job_id, source_video_path, target_filename="source_video.mp4"
                 )
 
-        if not source_gcs:
-            source_gcs = f"gs://{self.engine.gcs_bucket_name}/subtitles_outputs/{job_id}/source_video.mp4"
-
-        attached_deliverables.append(
-            {
-                "name": f"{package_name} (Source).mp4",
-                "gcs_uri": source_gcs,
-                "mime_type": "video/mp4",
-                "type": "source_video",
-            }
-        )
-        saved_filenames.append(f"{package_name} (Source).mp4")
+        if source_gcs:
+            attached_deliverables.append(
+                {
+                    "name": f"{package_name} (Source).mp4",
+                    "gcs_uri": source_gcs,
+                    "mime_type": "video/mp4",
+                    "type": "source_video",
+                }
+            )
+            saved_filenames.append(f"{package_name} (Source).mp4")
 
         # (e) ZIP Package
         zip_path = self.create_job_zip_package(job_id)
