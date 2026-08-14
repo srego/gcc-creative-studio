@@ -281,7 +281,32 @@ class PodcastSubtitleEngine:
                     ),
                 )
 
-                operation = self.speech_client.batch_recognize(request=request)
+                operation = None
+                for attempt in range(4):
+                    try:
+                        operation = self.speech_client.batch_recognize(
+                            request=request
+                        )
+                        break
+                    except Exception as e:
+                        err_str = str(e).lower()
+                        if (
+                            "429" in err_str
+                            or "resource_exhausted" in err_str
+                            or "quota" in err_str
+                            or "resource has been exhausted" in err_str
+                        ) and attempt < 3:
+                            backoff = 2 * (attempt + 1)
+                            logger.warning(
+                                f"Speech-to-Text batch_recognize quota limit hit (429). Retrying in {backoff}s (attempt {attempt+1}/3)..."
+                            )
+                            time.sleep(backoff)
+                        else:
+                            raise e
+
+                if not operation:
+                    raise RuntimeError("Failed to initiate Speech-to-Text batch_recognize operation.")
+
                 if hasattr(operation, "operation") and hasattr(
                     operation.operation, "name"
                 ):
@@ -343,26 +368,41 @@ Word timing data:
 
         if self.genai_client:
             for model in candidate_models:
-                try:
-                    config_kwargs: Dict[str, Any] = {
-                        "response_mime_type": "application/json"
-                    }
-                    if "2.5" in model or "thinking" in model:
-                        config_kwargs["thinking_config"] = types.ThinkingConfig(
-                            thinking_budget=0
+                for attempt in range(3):
+                    try:
+                        config_kwargs: Dict[str, Any] = {
+                            "response_mime_type": "application/json"
+                        }
+                        if "2.5" in model or "thinking" in model:
+                            config_kwargs["thinking_config"] = types.ThinkingConfig(
+                                thinking_budget=0
+                            )
+                        res = self.genai_client.models.generate_content(
+                            model=model,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(**config_kwargs),
                         )
-                    res = self.genai_client.models.generate_content(
-                        model=model,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(**config_kwargs),
-                    )
-                    raw_response_text = res.text.strip()
+                        raw_response_text = res.text.strip()
+                        break
+                    except Exception as e:
+                        err_str = str(e).lower()
+                        if (
+                            "429" in err_str
+                            or "resource_exhausted" in err_str
+                            or "quota" in err_str
+                        ) and attempt < 2:
+                            backoff = 1.5 * (attempt + 1)
+                            logger.warning(
+                                f"Gemini 429 quota reached on '{model}'. Retrying in {backoff}s (attempt {attempt+1}/2)..."
+                            )
+                            time.sleep(backoff)
+                            continue
+                        logger.warning(
+                            f"Gemini chunk refinement with '{model}' failed: {e}"
+                        )
+                        break
+                if raw_response_text:
                     break
-                except Exception as e:
-                    logger.warning(
-                        f"Gemini chunk refinement with '{model}' failed: {e}"
-                    )
-                    continue
 
         if not raw_response_text:
             return self._fallback_rule_based_segmenter(chunk_words)
@@ -393,11 +433,11 @@ Word timing data:
                 for i in range(0, len(words_data), chunk_size)
             ]
             logger.info(
-                f"Refining {len(words_data)} words across {len(chunks)} parallel chunks..."
+                f"Refining {len(words_data)} words across {len(chunks)} chunks..."
             )
             segments = []
             with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(len(chunks), 4)
+                max_workers=min(len(chunks), 2)
             ) as executor:
                 results = list(executor.map(self._refine_chunk_gemini, chunks))
                 for chunk_segs in results:
@@ -1191,7 +1231,11 @@ class SubtitleService:
                         if op_proto.HasField("error"):
                             job.status = "failed"
                             job.step = "failed"
-                            job.error_message = f"Speech-to-Text v2 error: {op_proto.error.message}"
+                            raw_err = op_proto.error.message or "Unknown Speech-to-Text error"
+                            if getattr(op_proto.error, "code", 0) == 8 or "429" in raw_err or "resource_exhausted" in raw_err.lower() or "quota" in raw_err.lower():
+                                job.error_message = f"Speech-to-Text quota limit reached: {raw_err}. Please wait a moment and try again."
+                            else:
+                                job.error_message = f"Speech-to-Text v2 error: {raw_err}"
                             self._save_job_state(job_id, job)
                             return job
 

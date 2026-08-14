@@ -2110,6 +2110,54 @@ async def test_save_job_to_gallery_fallback_commit():
         assert mock_db.commit.call_count == 2
 
 
+def test_transcribe_chirp3_429_retry(tmp_path):
+    """Tests transcribe_chirp3 retrying on 429 ResourceExhausted."""
+    service = SubtitleService()
+    engine = service.engine
+    engine.speech_client = MagicMock()
+    mock_op = MagicMock()
+    mock_op.done.return_value = True
+    mock_op.result.return_value = MagicMock()
+
+    # First call raises 429, second call succeeds
+    engine.speech_client.batch_recognize.side_effect = [
+        RuntimeError("429 Resource has been exhausted (e.g. check quota)."),
+        mock_op,
+    ]
+
+    with (
+        patch("subprocess.run"),
+        patch("time.sleep"),
+        patch.object(engine, "parse_speech_response", return_value={"full_text": "hello", "words": []}),
+    ):
+        dummy_audio = tmp_path / "audio.wav"
+        dummy_audio.write_bytes(b"RIFFdummy")
+        result = engine.transcribe_chirp3(str(dummy_audio))
+        assert result["full_text"] == "hello"
+        assert engine.speech_client.batch_recognize.call_count == 2
+
+
+def test_refine_chunk_gemini_429_retry():
+    """Tests _refine_chunk_gemini retrying on 429 before succeeding."""
+    service = SubtitleService()
+    engine = service.engine
+    engine.genai_client = MagicMock()
+    mock_res = MagicMock()
+    mock_res.text = '[{"speaker": "Speaker 1", "start_time": 0.0, "end_time": 1.0, "text": "Hello world"}]'
+
+    engine.genai_client.models.generate_content.side_effect = [
+        RuntimeError("429 ResourceExhausted: check quota"),
+        mock_res,
+    ]
+
+    with patch("time.sleep"):
+        words = [{"word": "Hello", "start_time": 0.0, "end_time": 0.5, "speaker": "Speaker 1"}]
+        segments = engine._refine_chunk_gemini(words)
+        assert len(segments) == 1
+        assert segments[0]["text"] == "Hello world"
+
+
+
 
 
 
