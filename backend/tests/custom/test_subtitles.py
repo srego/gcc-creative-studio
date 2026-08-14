@@ -2075,6 +2075,42 @@ def test_process_job_op_started_coverage(tmp_path):
         assert res.status == "completed"
 
 
+@pytest.mark.asyncio
+async def test_save_job_to_gallery_fallback_commit():
+    """Tests save_job_to_gallery retrying with user_id=None when initial commit fails."""
+    service = SubtitleService()
+    job_id = "sub_gal_fallback"
+    job = SubtitleResponseDTO(
+        job_id=job_id,
+        status="completed",
+        burned_in_video="gs://test-bucket/subtitles_outputs/sub_gal_fallback/output_burned_in.mp4",
+        subtitles_vtt="gs://test-bucket/subtitles_outputs/sub_gal_fallback/subtitles.vtt",
+    )
+    service.jobs[job_id] = job
+
+    mock_db = AsyncMock()
+    # First commit raises IntegrityError, second commit succeeds
+    mock_db.commit.side_effect = [RuntimeError("FK user constraint failed"), None]
+    mock_db.refresh = AsyncMock()
+
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = 1
+    mock_db.execute.return_value = mock_result
+
+    with patch.object(service, "create_job_zip_package", return_value=None):
+        media_id, name, video_gcs, thumb_gcs, count, files = await service.save_job_to_gallery(
+            job_id=job_id,
+            workspace_id=1,
+            user_id=999,
+            user_email="test@user.com",
+            db=mock_db,
+            title="Fallback Package",
+        )
+        assert count > 0
+        assert mock_db.commit.call_count == 2
+
+
+
 
 
 

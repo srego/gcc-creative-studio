@@ -2190,8 +2190,20 @@ class SubtitleService:
             thumb_gcs_list.append(thumbnail_gcs)
 
         # 5. Resolve valid workspace_id and user_id for foreign key constraints
-        validated_workspace_id = workspace_id or 1
-        validated_user_id = user_id
+        validated_workspace_id = 1
+        if workspace_id is not None:
+            try:
+                validated_workspace_id = int(workspace_id)
+            except Exception:
+                validated_workspace_id = 1
+
+        validated_user_id = None
+        if user_id is not None:
+            try:
+                validated_user_id = int(user_id)
+            except Exception:
+                validated_user_id = None
+
         try:
             from sqlalchemy import text
 
@@ -2199,60 +2211,106 @@ class SubtitleService:
                 text("SELECT id FROM workspaces WHERE id = :wid"),
                 {"wid": validated_workspace_id},
             )
-            if hasattr(ws_res, "scalar_one_or_none") and callable(
-                getattr(ws_res, "scalar_one_or_none")
-            ):
-                found_ws = ws_res.scalar_one_or_none()
-                if not found_ws:
-                    ws_fallback = await db.execute(
-                        text("SELECT id FROM workspaces ORDER BY id LIMIT 1")
-                    )
-                    if hasattr(ws_fallback, "scalar_one_or_none") and callable(
-                        getattr(ws_fallback, "scalar_one_or_none")
-                    ):
-                        first_ws = ws_fallback.scalar_one_or_none()
-                        if first_ws:
-                            validated_workspace_id = first_ws
+            found_ws = (
+                ws_res.scalar_one_or_none()
+                if hasattr(ws_res, "scalar_one_or_none") and callable(getattr(ws_res, "scalar_one_or_none"))
+                else None
+            )
+            if not found_ws:
+                ws_fallback = await db.execute(
+                    text("SELECT id FROM workspaces ORDER BY id LIMIT 1")
+                )
+                first_ws = (
+                    ws_fallback.scalar_one_or_none()
+                    if hasattr(ws_fallback, "scalar_one_or_none") and callable(getattr(ws_fallback, "scalar_one_or_none"))
+                    else None
+                )
+                if first_ws:
+                    validated_workspace_id = first_ws
 
             if validated_user_id:
                 u_res = await db.execute(
                     text("SELECT id FROM users WHERE id = :uid"),
                     {"uid": validated_user_id},
                 )
-                if hasattr(u_res, "scalar_one_or_none") and callable(
-                    getattr(u_res, "scalar_one_or_none")
-                ):
-                    if not u_res.scalar_one_or_none():
-                        validated_user_id = None
+                found_u = (
+                    u_res.scalar_one_or_none()
+                    if hasattr(u_res, "scalar_one_or_none") and callable(getattr(u_res, "scalar_one_or_none"))
+                    else None
+                )
+                if not found_u:
+                    validated_user_id = None
         except Exception as e:
             logger.debug(f"FK validation check skipped/failed: {e}")
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
         # 6. Create and persist exactly ONE MediaItem in PostgreSQL
-        media_item = MediaItem(
-            workspace_id=validated_workspace_id,
-            user_id=validated_user_id,
-            user_email=user_email,
-            mime_type=MimeTypeEnum.VIDEO_MP4.value,
-            model="chirp_3+gemini-2.5-flash",
-            prompt=f"Subtitles Studio: {package_name}",
-            original_prompt=package_name,
-            aspect_ratio=AspectRatioEnum.RATIO_16_9.value,
-            status=JobStatusEnum.COMPLETED.value,
-            gcs_uris=video_gcs_list,
-            thumbnail_uris=thumb_gcs_list,
-            source_assets=[],
-            raw_data={
-                "job_id": job_id,
-                "package_name": package_name,
-                "segment_count": job.segment_count,
-                "deliverables": saved_filenames,
-                "deliverable_items": attached_deliverables,
-                "created_via": "subtitles_studio",
-            },
-        )
-        db.add(media_item)
-        await db.commit()
-        await db.refresh(media_item)
+        try:
+            media_item = MediaItem(
+                workspace_id=validated_workspace_id,
+                user_id=validated_user_id,
+                user_email=user_email or "developer@creative-studio.local",
+                mime_type=MimeTypeEnum.VIDEO_MP4.value,
+                model="chirp_3+gemini-2.5-flash",
+                prompt=f"Subtitles Studio: {package_name}",
+                original_prompt=package_name,
+                aspect_ratio=AspectRatioEnum.RATIO_16_9.value,
+                status=JobStatusEnum.COMPLETED.value,
+                gcs_uris=video_gcs_list,
+                thumbnail_uris=thumb_gcs_list,
+                source_assets=[],
+                raw_data={
+                    "job_id": job_id,
+                    "package_name": package_name,
+                    "segment_count": job.segment_count,
+                    "deliverables": saved_filenames,
+                    "deliverable_items": attached_deliverables,
+                    "created_via": "subtitles_studio",
+                },
+            )
+            db.add(media_item)
+            await db.commit()
+            await db.refresh(media_item)
+        except Exception as e:
+            logger.warning(
+                f"Initial media_item commit failed: {e}. Retrying with user_id=None fallback."
+            )
+            try:
+                await db.rollback()
+                media_item = MediaItem(
+                    workspace_id=validated_workspace_id,
+                    user_id=None,
+                    user_email=user_email or "developer@creative-studio.local",
+                    mime_type=MimeTypeEnum.VIDEO_MP4.value,
+                    model="chirp_3+gemini-2.5-flash",
+                    prompt=f"Subtitles Studio: {package_name}",
+                    original_prompt=package_name,
+                    aspect_ratio=AspectRatioEnum.RATIO_16_9.value,
+                    status=JobStatusEnum.COMPLETED.value,
+                    gcs_uris=video_gcs_list,
+                    thumbnail_uris=thumb_gcs_list,
+                    source_assets=[],
+                    raw_data={
+                        "job_id": job_id,
+                        "package_name": package_name,
+                        "segment_count": job.segment_count,
+                        "deliverables": saved_filenames,
+                        "deliverable_items": attached_deliverables,
+                        "created_via": "subtitles_studio",
+                    },
+                )
+                db.add(media_item)
+                await db.commit()
+                await db.refresh(media_item)
+            except Exception as final_e:
+                logger.error(
+                    f"Fallback media_item commit failed: {final_e}",
+                    exc_info=True,
+                )
+                raise final_e
 
         return (
             media_item.id,
