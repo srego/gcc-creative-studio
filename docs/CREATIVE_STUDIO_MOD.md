@@ -7,7 +7,7 @@ Before applying custom extensions, execute the following triage invariant checks
 | # | Invariant Check | CLI Verification Command | Expected Baseline | If Upstream Drift Detected (Remediation) |
 |---|---|---|---|---|
 | **1** | **Frontend Routing Pattern** | `test -f frontend/src/app/app-routing.module.ts && echo "NgModule" \|\| echo "Standalone"` | File exists (`app-routing.module.ts`) using Angular `Routes` array. | **If Standalone (`app.routes.ts`):** Register the route `{ path: 'custom/adk-assistant', loadComponent: () => import(...) }` in `frontend/src/app/app.routes.ts` instead of `app-routing.module.ts`. |
-| **2** | **Navigation Container** | `grep -n "routerLink" frontend/src/app/header/header.component.html` | Top navigation toolbar with floating circular icon items. | **If Nav Moved to Sidebar (`sidebar.component.html`):** Place the `<mat-icon>auto_awesome</mat-icon>` button inside the sidebar menu list item rather than the header. |
+| **2** | **Navigation Container & Anchor Position** | `grep -n "routerLink" frontend/src/app/header/header.component.html` | Top navigation toolbar with floating circular icon items. Custom user navigation icons MUST be anchored inside the main navigation cluster immediately preceding the `/gallery` routerLink (`<div routerLink="/gallery"...`). | **If Nav Moved to Sidebar (`sidebar.component.html`):** Place the `<mat-icon>auto_awesome</mat-icon>` button inside the sidebar menu list item rather than the header, maintaining placement immediately preceding the gallery item. |
 | **3** | **Backend Router Hook** | `grep -n "app.include_router" backend/main.py` | `main.py` initializes FastAPI and mounts routers via `app.include_router(...)`. | **If Factory Pattern (`create_app()`):** Mount `app.include_router(adk_assistant_router)` inside the application factory function in `backend/main.py`. |
 | **4** | **Python Package Manager** | `which uv && uv --version` | `uv` package manager installed (Python 3.12+ runtime). | **If Using Poetry/Pipenv:** Run `poetry add google-adk` or `pip install google-adk` instead of `uv add`. |
 
@@ -115,8 +115,12 @@ const routes: Routes = [
 ```
 
 **3. Hook 3: Navigation Header Link (`frontend/src/app/header/header.component.html`)**
+
+> [!IMPORTANT]
+> Custom user navigation icons MUST be anchored inside the main navigation cluster immediately preceding the `/gallery` routerLink (`<div routerLink="/gallery"...`). They must not be placed near the admin/profile section at the bottom of the navigation bar.
+
 ```html
-<!-- frontend/src/app/header/header.component.html -->
+<!-- frontend/src/app/header/header.component.html (placed immediately preceding the /gallery routerLink block) -->
 <div
   routerLink="/custom/adk-assistant"
   matTooltip="ADK Assistant"
