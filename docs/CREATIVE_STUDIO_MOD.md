@@ -106,9 +106,28 @@ All extensions MUST reside strictly within isolated namespaces:
   - Automated test suite in `backend/tests/custom/adk_assistant/test_adk_assistant.py` verified via `uv run python -m unittest`.
 
 ### Stage 3: Frontend UI Implementation
-[FILL BY AGENT: Paste the exact Stage 3 prompt used to build the Angular component]
-- **Component Details:**
-  [FILL BY AGENT: Describe reactive signals and UI elements]
+- **Stage 3 Prompt:**
+  ```text
+  # STAGE 2.3: FRONTEND REACTIVE UI & SERVICE IMPLEMENTATION
+  Implement the Angular client service (adk-assistant.service.ts) and interactive chat UI component (adk-assistant.component.ts, .html, .scss) adhering to the Creative Studio UI design system (dark glassmorphism, Gemini Spectrum accents, live status pill, message thread, suggestion chips, clipboard copy, and thinking animation).
+  ```
+- **Client Service Contract (`frontend/src/app/custom/adk_assistant/adk-assistant.service.ts`):**
+  - **Interfaces:** `ChatMessage`, `QueryRequest`, `QueryResponse`, `HealthResponse`.
+  - **Methods:**
+    - `sendMessage(message: string, sessionId?: string, history?: ChatMessage[]): Observable<QueryResponse>` -> `POST ${environment.backendURL}/custom/adk-assistant/chat`
+    - `checkHealth(): Observable<HealthResponse>` -> `GET ${environment.backendURL}/custom/adk-assistant/health`
+    - `query(prompt: string, sessionId?: string): Observable<QueryResponse>` -> Legacy query alias
+- **Component Architecture (`frontend/src/app/custom/adk_assistant/`):**
+  - **Surface & Design Tokens:** High-contrast dark glassmorphic cards (`bg-zinc-900/90`, `backdrop-blur-2xl`, `border border-white/10`, `shadow-2xl`) with Gemini Spectrum gradient accents (`bg-gradient-to-r from-blue-500 via-violet-500 to-red-400`).
+  - **Live Connection Header:** Real-time status pill (`Online • gemini-3.7-flash`), session identifier display, and one-click session reset (`resetSession()`).
+  - **Message Thread:** Chat bubble stream distinguishing user prompts from assistant responses, including timestamps and clipboard copy actions with visual confirmation.
+  - **Quick Suggestions:** Interactive chips for rapid prompt engineering:
+    - *Optimize Imagen Prompt*
+    - *Generate Veo Storyboard*
+    - *Brand Consistency Check*
+    - *Multimodal Concept Ideas*
+  - **Input Box & Interactivity:** Textarea with auto-focus, keyboard listeners (`Enter` to submit, `Shift+Enter` for multiline), and gradient submit button with loading spinner.
+  - **Animated Thinking State:** Multi-dot gradient bouncing indicator active while awaiting model generation.
 
 ### Stage 4: Testing & Hardening
 [FILL BY AGENT: Paste the exact Stage 4 prompt used for tests and Docker/Terraform review]

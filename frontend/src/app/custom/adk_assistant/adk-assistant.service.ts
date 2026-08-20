@@ -20,27 +20,32 @@ import {Observable} from 'rxjs';
 import {environment} from '../../../environments/environment';
 
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant' | 'system' | 'model';
   content: string;
-  timestamp?: string;
+  timestamp?: string | Date;
 }
 
 export interface QueryRequest {
-  prompt: string;
+  message?: string;
+  prompt?: string;
   sessionId?: string;
+  history?: ChatMessage[];
   context?: Record<string, unknown>;
 }
 
 export interface QueryResponse {
   response: string;
   sessionId?: string;
+  agentName?: string;
   metadata?: Record<string, unknown>;
 }
 
 export interface HealthResponse {
   status: string;
-  service: string;
-  version: string;
+  agentName?: string;
+  model?: string;
+  service?: string;
+  version?: string;
 }
 
 @Injectable({
@@ -51,14 +56,34 @@ export class AdkAssistantService {
 
   constructor(private readonly http: HttpClient) {}
 
+  /**
+   * Performs a health check against the ADK Assistant endpoint.
+   */
   checkHealth(): Observable<HealthResponse> {
     return this.http.get<HealthResponse>(`${this.apiUrl}/health`);
   }
 
-  query(prompt: string, sessionId?: string): Observable<QueryResponse> {
-    return this.http.post<QueryResponse>(`${this.apiUrl}/query`, {
-      prompt,
+  /**
+   * Sends a prompt message to the ADK Assistant with session tracking and conversational history.
+   */
+  sendMessage(
+    message: string,
+    sessionId?: string,
+    history?: ChatMessage[],
+  ): Observable<QueryResponse> {
+    const payload: QueryRequest = {
+      message,
+      prompt: message,
       sessionId,
-    });
+      history,
+    };
+    return this.http.post<QueryResponse>(`${this.apiUrl}/chat`, payload);
+  }
+
+  /**
+   * Legacy query method alias for backward compatibility.
+   */
+  query(prompt: string, sessionId?: string): Observable<QueryResponse> {
+    return this.sendMessage(prompt, sessionId);
   }
 }
