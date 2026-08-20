@@ -1,20 +1,15 @@
 # Creative Studio Mod Guide: Extending Creative Studio While Keeping Core Updated
 
-# PRE-FLIGHT CHECK: CREATIVE STUDIO EXTENSION COMPATIBILITY ASSESSOR
+# PRE-FLIGHT CHECK: CREATIVE STUDIO EXTENSION COMPATIBILITY ASSESSOR & TRIAGE MATRIX
 
-You are the Environment Compatibility Assessor. Before we apply custom extensions, analyze the current repository structure to confirm integration invariants.
+Before applying custom extensions, execute the following triage invariant checks to verify integration baselines and resolve upstream drift:
 
-## 1. Inspection Checklist
-1. Routing Pattern: Check whether routing uses `app-routing.module.ts` or standalone `app.routes.ts`.
-2. Navigation Anchor: Locate the primary navigation template (e.g., `frontend/src/app/header/header.component.html` or equivalent sidebar).
-3. Backend Router Registration: Inspect `backend/main.py` to identify how routers are mounted (`app.include_router(...)`).
-4. Design Tokens: Verify that `UI_DESIGN_SYSTEM.md` matches the current `styles.scss` and `tailwind.config.js`.
-
-## 2. Output Report
-Generate a brief Compatibility Report with:
-- Compatibility Status: [READY | ADAPTATIONS REQUIRED]
-- Detected Integration Paths (exact file paths for routing, navbar, and main.py)
-- Any recommended parameter overrides for Stage 1/2 prompts.
+| # | Invariant Check | CLI Verification Command | Expected Baseline | If Upstream Drift Detected (Remediation) |
+|---|---|---|---|---|
+| **1** | **Frontend Routing Pattern** | `test -f frontend/src/app/app-routing.module.ts && echo "NgModule" \|\| echo "Standalone"` | File exists (`app-routing.module.ts`) using Angular `Routes` array. | **If Standalone (`app.routes.ts`):** Register the route `{ path: 'custom/adk-assistant', loadComponent: () => import(...) }` in `frontend/src/app/app.routes.ts` instead of `app-routing.module.ts`. |
+| **2** | **Navigation Container** | `grep -n "routerLink" frontend/src/app/header/header.component.html` | Top navigation toolbar with floating circular icon items. | **If Nav Moved to Sidebar (`sidebar.component.html`):** Place the `<mat-icon>auto_awesome</mat-icon>` button inside the sidebar menu list item rather than the header. |
+| **3** | **Backend Router Hook** | `grep -n "app.include_router" backend/main.py` | `main.py` initializes FastAPI and mounts routers via `app.include_router(...)`. | **If Factory Pattern (`create_app()`):** Mount `app.include_router(adk_assistant_router)` inside the application factory function in `backend/main.py`. |
+| **4** | **Python Package Manager** | `which uv && uv --version` | `uv` package manager installed (Python 3.12+ runtime). | **If Using Poetry/Pipenv:** Run `poetry add google-adk` or `pip install google-adk` instead of `uv add`. |
 
 ---
 
@@ -64,9 +59,51 @@ All extensions MUST reside strictly within isolated namespaces:
   - Core Hook 3: `frontend/src/app/header/header.component.html`
 
 ### Stage 2: Backend ADK Integration
-[FILL BY AGENT: Paste the exact Stage 2 prompt used to wrap agent.py into FastAPI]
-- **FastAPI Router Contract:**
-  [FILL BY AGENT: Show the request/response schema]
+- **Stage 2 Prompt:**
+  ```text
+  # STAGE 2.2: BACKEND ADK AGENT & FASTAPI ROUTER IMPLEMENTATION + ASSESSOR TRIAGE MATRIX
+  Implement the backend ADK domain files (agent.py, schemas.py, router.py) and update docs/CREATIVE_STUDIO_MOD.md with the actionable Pre-Flight Triage Matrix.
+  ```
+- **ADK Agent Definition (`backend/src/custom/adk_assistant/agent.py`):**
+  - **Agent Name:** `creative_studio_assistant`
+  - **Model:** `gemini-3.7-flash`
+  - **Instructions:** "You are the Google Cloud Creative Studio AI Assistant. Assist users with prompt engineering for Imagen and Veo, brand guideline adherence, workflow automation, and multimodal creative generation. Provide concise, high-impact creative recommendations and structured prompt templates."
+- **FastAPI Router Contract (`backend/src/custom/adk_assistant/router.py`):**
+  - **Prefix:** `/api/custom/adk-assistant`
+  - **Tags:** `["Custom: ADK Assistant"]`
+  - **Endpoints:**
+    - `GET /health` -> Returns `HealthResponse(status="healthy", agent_name="creative_studio_assistant", model="gemini-3.7-flash", service="adk-assistant", version="0.1.0")`
+    - `POST /chat` -> Accepts `QueryRequest(message, session_id, history, context)`, runs `google.adk.runners.Runner` with `InMemorySessionService`, and returns `QueryResponse(response, session_id, agent_name, metadata)`
+    - `POST /query` -> Backward-compatible endpoint alias for `/chat`
+- **Pydantic Schemas (`backend/src/custom/adk_assistant/schemas.py`):**
+  ```python
+  class ChatMessage(BaseModel):
+      role: Literal["user", "assistant", "system", "model"]
+      content: str
+      timestamp: datetime
+
+  class QueryRequest(BaseModel):
+      message: str
+      prompt: str | None = None
+      session_id: str | None = None
+      history: list[ChatMessage] | None = None
+      context: dict[str, Any] | None = None
+
+  class QueryResponse(BaseModel):
+      response: str
+      session_id: str | None = None
+      agent_name: str = "creative_studio_assistant"
+      metadata: dict[str, Any] | None = None
+
+  class HealthResponse(BaseModel):
+      status: str = "healthy"
+      agent_name: str = "creative_studio_assistant"
+      model: str = "gemini-3.7-flash"
+      service: str = "adk-assistant"
+      version: str = "0.1.0"
+  ```
+- **Verification & Unit Tests:**
+  - Automated test suite in `backend/tests/custom/adk_assistant/test_adk_assistant.py` verified via `uv run python -m unittest`.
 
 ### Stage 3: Frontend UI Implementation
 [FILL BY AGENT: Paste the exact Stage 3 prompt used to build the Angular component]
@@ -88,16 +125,5 @@ All extensions MUST reside strictly within isolated namespaces:
 ## 5. Troubleshooting & Field Notes
 | Issue / Symptom | Root Cause | Resolution |
 |---|---|---|
-| [FILL BY AGENT: Issue 1] | [FILL BY AGENT: Cause 1] | [FILL BY AGENT: Fix 1] |
-| [FILL BY AGENT: Issue 2] | [FILL BY AGENT: Cause 2] | [FILL BY AGENT: Fix 2] |
-
-
-
-
-
-
-
-
-
-
-
+| Direct `TestClient(router)` raises `fastapi_middleware_astack not found` | In FastAPI 0.141+, raw APIRouter in TestClient lacks middleware stack | Mount router on a `FastAPI()` application instance in tests |
+| Global Python lacks ADK package | Environment isolation using uv virtualenv | Execute all Python scripts and tests with `uv run` |

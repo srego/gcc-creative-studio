@@ -12,3 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """ADK Assistant custom domain module."""
+
+from src.custom.adk_assistant.agent import AGENT_MODEL, AGENT_NAME, root_agent
+from src.custom.adk_assistant.router import adk_assistant_router, router
+from src.custom.adk_assistant.schemas import (
+    ChatMessage,
+    HealthResponse,
+    QueryRequest,
+    QueryResponse,
+)
+
+__all__ = [
+    "AGENT_MODEL",
+    "AGENT_NAME",
+    "ChatMessage",
+    "HealthResponse",
+    "QueryRequest",
+    "QueryResponse",
+    "adk_assistant_router",
+    "root_agent",
+    "router",
+]

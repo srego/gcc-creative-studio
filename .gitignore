@@ -21,3 +21,4 @@ genmedia-agent-demos
 .agents
 cloud-sql-proxy
 .gemini/
+.scrap/

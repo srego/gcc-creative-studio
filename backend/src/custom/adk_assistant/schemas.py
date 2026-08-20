@@ -15,7 +15,7 @@
 
 from datetime import datetime, timezone
 from typing import Any, Literal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -27,7 +27,7 @@ class ChatMessage(BaseModel):
         populate_by_name=True,
     )
 
-    role: Literal["user", "assistant", "system"]
+    role: Literal["user", "assistant", "system", "model"]
     content: str
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
@@ -42,9 +42,35 @@ class QueryRequest(BaseModel):
         populate_by_name=True,
     )
 
-    prompt: str
-    session_id: str | None = None
-    context: dict[str, Any] | None = None
+    message: str = Field(
+        default="",
+        description="User message prompt text",
+    )
+    prompt: str | None = Field(
+        default=None,
+        description="Alias for message prompt text",
+    )
+    session_id: str | None = Field(
+        default=None,
+        description="Unique session identifier for multi-turn conversation",
+    )
+    history: list[ChatMessage] | None = Field(
+        default=None,
+        description="Optional conversational history context",
+    )
+    context: dict[str, Any] | None = Field(
+        default=None,
+        description="Additional context parameters",
+    )
+
+    @model_validator(mode="after")
+    def populate_message(self) -> "QueryRequest":
+        """Ensures message or prompt is populated."""
+        if not self.message and self.prompt:
+            self.message = self.prompt
+        elif not self.prompt and self.message:
+            self.prompt = self.message
+        return self
 
 
 class QueryResponse(BaseModel):
@@ -57,6 +83,7 @@ class QueryResponse(BaseModel):
 
     response: str
     session_id: str | None = None
+    agent_name: str = "creative_studio_assistant"
     metadata: dict[str, Any] | None = None
 
 
@@ -68,6 +95,8 @@ class HealthResponse(BaseModel):
         populate_by_name=True,
     )
 
-    status: str = "ok"
+    status: str = "healthy"
+    agent_name: str = "creative_studio_assistant"
+    model: str = "gemini-3.7-flash"
     service: str = "adk-assistant"
     version: str = "0.1.0"
