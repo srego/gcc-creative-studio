@@ -45,9 +45,23 @@ All extensions MUST reside strictly within isolated namespaces:
 ## 3. The 4-Stage Agent Implementation Recipes
 
 ### Stage 1: Domain Scaffolding
-[FILL BY AGENT: Paste the exact Stage 1 prompt used to create directories and register routes]
+- **Stage 1 Prompt:**
+  ```text
+  # STAGE 2.1: DOMAIN SCAFFOLDING & CORE INTEGRATION HOOKS
+  Create the isolated domain structure under backend/src/custom/adk_assistant/, frontend/src/app/custom/adk_assistant/, and backend/tests/custom/adk_assistant/. Register the 3 minimal core integration hooks in backend/main.py, frontend/src/app/app-routing.module.ts, and frontend/src/app/header/header.component.html.
+  ```
 - **Key Files Created/Modified:**
-  [FILL BY AGENT: List files modified]
+  - `backend/src/custom/adk_assistant/__init__.py`
+  - `backend/src/custom/adk_assistant/schemas.py`
+  - `backend/src/custom/adk_assistant/router.py`
+  - `frontend/src/app/custom/adk_assistant/adk-assistant.component.ts`
+  - `frontend/src/app/custom/adk_assistant/adk-assistant.component.html`
+  - `frontend/src/app/custom/adk_assistant/adk-assistant.component.scss`
+  - `frontend/src/app/custom/adk_assistant/adk-assistant.service.ts`
+  - `backend/tests/custom/adk_assistant/__init__.py`
+  - Core Hook 1: `backend/main.py`
+  - Core Hook 2: `frontend/src/app/app-routing.module.ts`
+  - Core Hook 3: `frontend/src/app/header/header.component.html`
 
 ### Stage 2: Backend ADK Integration
 [FILL BY AGENT: Paste the exact Stage 2 prompt used to wrap agent.py into FastAPI]

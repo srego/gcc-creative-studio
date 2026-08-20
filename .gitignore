@@ -18,5 +18,6 @@ local/
 !**/environments/dev-infra-example/
 
 genmedia-agent-demos
-.gemini
-.agentscloud-sql-proxy
+.agents
+cloud-sql-proxy
+.gemini/

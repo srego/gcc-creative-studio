@@ -37,6 +37,9 @@ from src.brand_guidelines.brand_guideline_controller import (
     router as brand_guideline_router,
 )
 from src.config.config_service import config_service
+from src.custom.adk_assistant.router import (
+    adk_assistant_router,
+)
 from src.galleries.gallery_controller import router as gallery_router
 from src.generation_options.generation_options_controller import (
     router as generation_options_router,
@@ -185,3 +188,4 @@ app.include_router(brand_guideline_router)
 app.include_router(workflow_router)
 app.include_router(workflows_executor_router)
 app.include_router(workbench_router)
+app.include_router(adk_assistant_router)

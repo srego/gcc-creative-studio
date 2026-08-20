@@ -1,0 +1,76 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="adk-assistant-container p-6 max-w-5xl mx-auto text-neutral-100">
+  <div class="flex items-center justify-between mb-8 pb-4 border-b border-neutral-800">
+    <div class="flex items-center gap-3">
+      <div class="p-3 bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-500 rounded-2xl shadow-lg">
+        <mat-icon class="text-white">auto_awesome</mat-icon>
+      </div>
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight text-white">ADK Assistant</h1>
+        <p class="text-xs text-neutral-400">Custom Isolated Domain Extension for Creative Studio</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-900/80 border border-neutral-700/60 text-xs">
+      <span class="w-2 h-2 rounded-full" [ngClass]="status === 'Connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'"></span>
+      <span class="text-neutral-300 font-medium">{{ status }}</span>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 gap-6">
+    <div class="bg-neutral-900/60 backdrop-blur-xl border border-neutral-800/80 rounded-3xl p-6 shadow-xl">
+      <h2 class="text-base font-semibold text-neutral-200 mb-4 flex items-center gap-2">
+        <mat-icon class="text-indigo-400 text-lg">chat</mat-icon>
+        Query Assistant
+      </h2>
+
+      <div class="space-y-4">
+        <div class="relative">
+          <textarea
+            [(ngModel)]="prompt"
+            placeholder="Ask the ADK Assistant anything..."
+            rows="4"
+            class="w-full bg-neutral-950/80 border border-neutral-800 rounded-2xl p-4 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors resize-none"
+            (keydown.enter)="$event.preventDefault(); sendQuery()"
+          ></textarea>
+        </div>
+
+        <div class="flex justify-end">
+          <button
+            mat-flat-button
+            (click)="sendQuery()"
+            [disabled]="!prompt.trim() || isLoading"
+            class="!bg-gradient-to-r !from-blue-600 !to-indigo-600 hover:!from-blue-500 hover:!to-indigo-500 !text-white !rounded-xl !px-6 !py-2 font-medium transition-all shadow-md disabled:!opacity-50"
+          >
+            <span *ngIf="!isLoading">Send Query</span>
+            <span *ngIf="isLoading" class="flex items-center gap-2">
+              <mat-spinner diameter="16"></mat-spinner>
+              Processing...
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <div *ngIf="response" class="mt-6 pt-6 border-t border-neutral-800/80">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-neutral-400 mb-2">Response</h3>
+        <div class="p-4 rounded-2xl bg-neutral-950/90 border border-neutral-800/80 text-sm text-neutral-200 leading-relaxed whitespace-pre-wrap">
+          {{ response }}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -30,6 +30,7 @@ import {ExecutionHistoryComponent} from './workflows/execution-history/execution
 import {WorkflowEditorComponent} from './workflows/workflow-editor/workflow-editor.component';
 import {WorkflowListComponent} from './workflows/workflow-list/workflow-list.component';
 import {WorkbenchComponent} from './workbench/workbench.component';
+import {AdkAssistantComponent} from './custom/adk_assistant/adk-assistant.component';
 import {UpscaleComponent} from './upscale/upscale.component';
 import {UserRolesEnum} from './common/models/user.model';
 
@@ -100,6 +101,11 @@ const routes: Routes = [
   {
     path: 'imagen-upscale',
     component: UpscaleComponent,
+    canActivate: [AuthGuardService],
+  },
+  {
+    path: 'custom/adk-assistant',
+    component: AdkAssistantComponent,
     canActivate: [AuthGuardService],
   },
 ];
