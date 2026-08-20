@@ -130,14 +130,105 @@ All extensions MUST reside strictly within isolated namespaces:
   - **Animated Thinking State:** Multi-dot gradient bouncing indicator active while awaiting model generation.
 
 ### Stage 4: Testing & Hardening
-[FILL BY AGENT: Paste the exact Stage 4 prompt used for tests and Docker/Terraform review]
-- **Verification Results:**
-  [FILL BY AGENT: Show pytest coverage output and build status]
+- **Stage 4 Prompt:**
+  ```text
+  # STAGE 2.4: VERIFICATION, AUTOMATED TESTING & HARDENING
+  Implement the full pytest test suite in backend/tests/custom/adk_assistant/test_adk_assistant.py, execute tests with coverage validation, verify container and build packaging for /custom/ domains, update the master guide docs/CREATIVE_STUDIO_MOD.md, and record post-execution debrief.
+  ```
+- **Test Suite Architecture (`backend/tests/custom/adk_assistant/test_adk_assistant.py`):**
+  - `test_agent_initialization`: Validates `root_agent` metadata, model configuration (`gemini-3.7-flash`), and system instructions.
+  - `test_health_check_endpoint`: Validates `GET /api/custom/adk-assistant/health` returns HTTP 200, status `healthy`, and correct model metadata.
+  - `test_chat_endpoint_success`: Validates `POST /api/custom/adk-assistant/chat` with mocked `google.adk.runners.Runner` and session service, asserting structured responses.
+  - `test_chat_endpoint_validation_error`: Validates HTTP 400 rejection for empty and whitespace payloads.
+  - `test_query_alias_endpoint`: Validates legacy `POST /api/custom/adk-assistant/query` alias endpoint.
+  - `test_chat_endpoint_internal_error_handling`: Validates HTTP 500 error mapping when runner fails.
+  - `test_chat_endpoint_empty_parts_fallback`: Validates fallback messaging when agent events contain no text parts.
+
+- **Verification Results & Test Coverage:**
+  ```text
+  ============================= test session starts ==============================
+  platform linux -- Python 3.13.14, pytest-9.0.2, pluggy-1.6.0
+  rootdir: backend
+  configfile: pytest.ini
+  plugins: anyio-4.12.0, cov-7.0.0, asyncio-1.3.0
+  collected 7 items
+
+  tests/custom/adk_assistant/test_adk_assistant.py::TestAdkAssistantSuite::test_agent_initialization PASSED [ 14%]
+  tests/custom/adk_assistant/test_adk_assistant.py::TestAdkAssistantSuite::test_chat_endpoint_empty_parts_fallback PASSED [ 28%]
+  tests/custom/adk_assistant/test_adk_assistant.py::TestAdkAssistantSuite::test_chat_endpoint_internal_error_handling PASSED [ 42%]
+  tests/custom/adk_assistant/test_adk_assistant.py::TestAdkAssistantSuite::test_chat_endpoint_success PASSED [ 57%]
+  tests/custom/adk_assistant/test_adk_assistant.py::TestAdkAssistantSuite::test_chat_endpoint_validation_error PASSED [ 71%]
+  tests/custom/adk_assistant/test_adk_assistant.py::TestAdkAssistantSuite::test_health_check_endpoint PASSED [ 85%]
+  tests/custom/adk_assistant/test_adk_assistant.py::TestAdkAssistantSuite::test_query_alias_endpoint PASSED [100%]
+
+  ================================ tests coverage ================================
+  Name                                   Stmts   Miss  Cover   Missing
+  --------------------------------------------------------------------
+  src/custom/adk_assistant/__init__.py       4      0   100%
+  src/custom/adk_assistant/agent.py          5      0   100%
+  src/custom/adk_assistant/router.py        46      1    98%   134
+  src/custom/adk_assistant/schemas.py       36      0   100%
+  --------------------------------------------------------------------
+  TOTAL                                     91      1    99%
+  ======================== 7 passed, 2 warnings in 0.31s =========================
+  ```
+
+- **Container & Packaging Verification:**
+  - **Backend Container (`backend/Dockerfile`):** Copies entire project context (`COPY . /app`) and syncs locked dependencies via `uv sync --locked --no-dev`. Custom domain modules under `backend/src/custom/` and `google-adk` dependencies in `pyproject.toml` / `uv.lock` are packaged automatically with zero Dockerfile overrides.
+  - **Frontend Container (`frontend/Dockerfile`):** Multi-stage build copies workspace context (`COPY . /app/`) and runs Angular compilation (`npm run build-dev`), packaging `frontend/src/app/custom/` into static nginx assets without requiring custom build steps.
+  - **TypeScript Static Analysis:** Verified with `npm run compile` (`tsc --noEmit`) passing with 0 errors.
 
 ---
 
 ## 4. Automated Upstream Sync Strategy
-[FILL BY AGENT: Insert GitHub Actions workflow yaml for upstream tracking]
+To ensure long-term maintainability and effortless synchronization with Google's upstream `gcc-creative-studio` releases, configure a GitHub Actions upstream synchronization workflow:
+
+```yaml
+# .github/workflows/upstream-sync.yml
+name: Upstream Sync & Conflict Check
+
+on:
+  schedule:
+    - cron: '0 3 * * 1' # Runs weekly on Mondays at 03:00 UTC
+  workflow_dispatch:
+
+jobs:
+  sync-upstream:
+    name: Sync Upstream & Detect Drift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout working branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/adk-assistant
+          fetch-depth: 0
+
+      - name: Configure upstream remote
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/GoogleCloudPlatform/gcc-creative-studio.git
+          git fetch upstream main
+
+      - name: Check for upstream drift / mergeability
+        run: |
+          echo "Attempting dry-run merge of upstream/main..."
+          git merge --no-commit --no-ff upstream/main || {
+            echo "::error::Merge conflict detected between upstream/main and feature/adk-assistant!"
+            git merge --abort
+            exit 1
+          }
+          git merge --abort
+          echo "Upstream main is cleanly mergeable with custom domain."
+
+      - name: Run Backend & Custom Domain Tests
+        run: |
+          cd backend
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          uv sync --all-extras
+          uv run pytest tests/ -v
+```
 
 ---
 
@@ -146,3 +237,5 @@ All extensions MUST reside strictly within isolated namespaces:
 |---|---|---|
 | Direct `TestClient(router)` raises `fastapi_middleware_astack not found` | In FastAPI 0.141+, raw APIRouter in TestClient lacks middleware stack | Mount router on a `FastAPI()` application instance in tests |
 | Global Python lacks ADK package | Environment isolation using uv virtualenv | Execute all Python scripts and tests with `uv run` |
+| Pytest collects FastAPI app instance as a test function | Test runner matches variables starting with `test_` | Rename test FastAPI application instance to `app` |
+
