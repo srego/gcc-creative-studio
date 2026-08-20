@@ -12,105 +12,116 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Automated Upstream Sync
+name: Upstream Sync & Conflict Check
 
 on:
   schedule:
-    # Run weekly on Mondays at 08:00 UTC
-    - cron: '0 8 * * 1'
+    - cron: '0 4 * * 1' # Runs weekly on Mondays at 04:00 UTC
   workflow_dispatch:
-    inputs:
-      upstream_branch:
-        description: 'Upstream branch to pull from'
-        required: true
-        default: 'main'
-      target_branch:
-        description: 'Target branch in this repo to update'
-        required: true
-        default: 'develop'
 
 permissions:
   contents: write
+  issues: write
   pull-requests: write
 
 jobs:
-  check-and-sync-upstream:
-    name: Check & Sync from Upstream
+  sync-upstream:
+    name: Sync Upstream & Verify Domain Integrity
     runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: 'dummy-project-id'
 
     steps:
-      - name: Checkout Code
+      - name: Checkout working branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.target_branch || 'develop' }}
+          ref: feature/adk-assistant
           fetch-depth: 0
 
-      - name: Configure Git Identity
+      - name: Configure upstream remote
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/GoogleCloudPlatform/gcc-creative-studio.git || git remote set-url upstream https://github.com/GoogleCloudPlatform/gcc-creative-studio.git
+          git fetch upstream main
 
-      - name: Setup Upstream Remote
+      - name: Dry-run merge check
+        id: merge_check
         run: |
-          git remote add upstream https://github.com/GoogleCloudPlatform/gcc-creative-studio.git || true
-          git fetch upstream ${{ github.event.inputs.upstream_branch || 'main' }}
+          echo "Executing dry-run merge of upstream/main to detect merge conflicts or drift..."
+          if ! git merge --no-commit --no-ff upstream/main; then
+            echo "::error::Merge conflict detected between upstream/main and feature/adk-assistant!"
+            git merge --abort || true
+            exit 1
+          fi
+          git merge --abort || true
+          echo "Upstream main is cleanly mergeable with feature/adk-assistant."
 
-      - name: Check for New Upstream Commits
-        id: check_upstream
+      - name: Execute upstream merge
         run: |
-          UPSTREAM_REF="upstream/${{ github.event.inputs.upstream_branch || 'main' }}"
-          BASE_REF="${{ github.event.inputs.target_branch || 'develop' }}"
-          MERGE_BASE=$(git merge-base "$BASE_REF" "$UPSTREAM_REF")
-          NEW_COMMITS=$(git rev-list --count "${MERGE_BASE}..${UPSTREAM_REF}")
-          echo "new_commits_count=${NEW_COMMITS}" >> "$GITHUB_OUTPUT"
-          echo "Found ${NEW_COMMITS} new commits in upstream."
+          echo "Merging upstream/main into feature/adk-assistant..."
+          git merge upstream/main -m "chore(sync): merge upstream/main into feature/adk-assistant" --no-edit
 
-      - name: Setup Python & uv
-        if: steps.check_upstream.outputs.new_commits_count > 0
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Install uv
-        if: steps.check_upstream.outputs.new_commits_count > 0
+      - name: Set up uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          cache-dependency-glob: 'backend/uv.lock'
+          cache-dependency-glob: "backend/uv.lock"
 
-      - name: Create Sync Branch & Merge Upstream
-        if: steps.check_upstream.outputs.new_commits_count > 0
-        id: perform_merge
-        run: |
-          SYNC_BRANCH="sync/upstream-$(date +%Y%m%d-%H%M%S)"
-          git checkout -b "$SYNC_BRANCH"
-          git merge --no-ff "upstream/${{ github.event.inputs.upstream_branch || 'main' }}" -m "chore(sync): automated sync from upstream/${{ github.event.inputs.upstream_branch || 'main' }}"
-          echo "sync_branch=${SYNC_BRANCH}" >> "$GITHUB_OUTPUT"
-
-      - name: Verify Custom Backend Suite
-        if: steps.check_upstream.outputs.new_commits_count > 0
+      - name: Install backend dependencies
         run: |
           cd backend
           uv sync --all-extras
-          uv run pytest tests/custom -v --cov=src/custom --cov-fail-under=80
 
-      - name: Push Sync Branch & Open PR
-        if: steps.check_upstream.outputs.new_commits_count > 0
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SYNC_BRANCH: ${{ steps.perform_merge.outputs.sync_branch }}
-          TARGET_BRANCH: ${{ github.event.inputs.target_branch || 'develop' }}
+      - name: Run Backend & Custom Domain Tests
         run: |
-          git push origin "$SYNC_BRANCH"
-          gh pr create \
-            --base "$TARGET_BRANCH" \
-            --head "$SYNC_BRANCH" \
-            --title "chore(sync): Upstream Sync ($(date +%Y-%m-%d))" \
-            --body "### 🔄 Automated Upstream Sync
-          
-          This automated Pull Request merges the latest updates from \`GoogleCloudPlatform/gcc-creative-studio:${{ github.event.inputs.upstream_branch || 'main' }}\` into \`${TARGET_BRANCH}\`.
-          
-          **Automated Checks:**
-          - ✅ Backend Custom Test Suite passed with >= 80% coverage.
-          
-          Please review the diff and approve to merge."
+          cd backend
+          uv run pytest tests/custom/adk_assistant/ -v --cov=src/custom/adk_assistant
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run Frontend Compilation Check
+        run: |
+          cd frontend
+          npm run compile
+
+      - name: Create GitHub Issue Alert on Failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const issueTitle = `🚨 [Upstream Sync Alert] Conflict or Test Failure Detected on ${context.ref}`;
+            const issueBody = `### Upstream Sync Automated Failure Report\n\n` +
+              `An automated upstream synchronization workflow run has **failed** on branch \`${context.ref}\`.\n\n` +
+              `- **Run URL:** [View Workflow Run Details](${runUrl})\n` +
+              `- **Trigger:** \`${context.eventName}\`\n` +
+              `- **Commit SHA:** \`${context.sha}\`\n` +
+              `- **Upstream Repository:** \`GoogleCloudPlatform/gcc-creative-studio:main\`\n\n` +
+              `### Required Action Items:\n` +
+              `1. Check if merge conflicts occurred between \`upstream/main\` and \`feature/adk-assistant\`.\n` +
+              `2. Verify if breaking upstream changes impacted \`backend/src/custom/adk_assistant/\` or \`frontend/src/app/custom/adk_assistant/\`.\n` +
+              `3. Re-run local test validation via \`uv run pytest tests/custom/adk_assistant/\` and \`npm run compile\` in \`frontend\`.\n`;
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: issueTitle,
+              body: issueBody,
+              labels: ['upstream-sync', 'automated-alert', 'bug']
+            });

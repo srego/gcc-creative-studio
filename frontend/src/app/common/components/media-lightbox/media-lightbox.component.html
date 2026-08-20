@@ -47,7 +47,7 @@
     </ng-container>
 
     <ng-container *ngIf="isVideo && selectedUrl">
-      <div class="video-wrapper" style="width: 100%; height: 100%;">
+      <div class="video-wrapper" (click)="toggleVideoPlay()" style="width: 100%; height: 100%;">
         <video
           #videoPlayer
           [src]="selectedUrl"

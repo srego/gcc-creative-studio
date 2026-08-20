@@ -59,8 +59,6 @@ export class HeaderComponent implements OnDestroy {
   private readonly destroy$ = new Subject<void>();
   toolsMenuHovered = false;
   private menuTimeout: any;
-  customToolsMenuHovered = false;
-  private customMenuTimeout: any;
   isBrowser: boolean;
 
   constructor(
@@ -147,19 +145,6 @@ export class HeaderComponent implements OnDestroy {
     // will cancel this timer, keeping the menu open.
     this.menuTimeout = setTimeout(() => {
       this.toolsMenuHovered = false;
-    }, 200);
-  }
-
-  onCustomToolsEnter() {
-    if (this.customMenuTimeout) {
-      clearTimeout(this.customMenuTimeout);
-    }
-    this.customToolsMenuHovered = true;
-  }
-
-  onCustomToolsLeave() {
-    this.customMenuTimeout = setTimeout(() => {
-      this.customToolsMenuHovered = false;
     }, 200);
   }
 }

@@ -16,7 +16,6 @@ import asyncio
 import logging
 import mimetypes
 import tempfile
-from typing import Any
 import zipfile
 
 from fastapi import Depends, HTTPException, status
@@ -90,126 +89,94 @@ class GalleryService:
 
     async def _enrich_source_asset_link(
         self,
-        link: Any,
+        link: SourceAssetLink,
     ) -> SourceAssetLinkResponse | None:
         """Fetches the source asset document and generates a presigned URL for it."""
-        try:
-            asset_id = (
-                getattr(link, "asset_id", None)
-                if not isinstance(link, dict)
-                else link.get("asset_id")
-            )
-            if not asset_id or not isinstance(asset_id, int):
-                return None
+        asset_doc = await self.source_asset_repo.get_by_id(link.asset_id)
 
-            asset_doc = await self.source_asset_repo.get_by_id(asset_id)
-            if not asset_doc or not getattr(asset_doc, "gcs_uri", None):
-                return None
+        if not asset_doc:
+            return None
 
-            tasks = [
+        tasks = [
+            asyncio.to_thread(
+                self.iam_signer_credentials.generate_presigned_url,
+                asset_doc.gcs_uri,
+            ),
+        ]
+
+        # Check if the asset has a thumbnail and create a task for it.
+        # This requires the SourceAsset model to have a `thumbnail_gcs_uri` field.
+        if asset_doc.thumbnail_gcs_uri:
+            tasks.append(
                 asyncio.to_thread(
                     self.iam_signer_credentials.generate_presigned_url,
-                    asset_doc.gcs_uri,
+                    asset_doc.thumbnail_gcs_uri,
                 ),
-            ]
-
-            if getattr(asset_doc, "thumbnail_gcs_uri", None):
-                tasks.append(
-                    asyncio.to_thread(
-                        self.iam_signer_credentials.generate_presigned_url,
-                        asset_doc.thumbnail_gcs_uri,
-                    ),
-                )
-
-            results = await asyncio.gather(*tasks)
-            presigned_url = results[0]
-            presigned_thumbnail_url = results[1] if len(results) > 1 else None
-
-            dump_data = (
-                link.model_dump()
-                if hasattr(link, "model_dump")
-                else (link if isinstance(link, dict) else {})
             )
-            return SourceAssetLinkResponse(
-                **dump_data,
-                presigned_url=presigned_url,
-                presigned_thumbnail_url=presigned_thumbnail_url,
-                gcs_uri=asset_doc.gcs_uri,
-                mime_type=getattr(asset_doc, "mime_type", None),
-            )
-        except Exception as e:
-            logger.warning(f"Error enriching source asset link: {e}")
-            return None
+
+        results = await asyncio.gather(*tasks)
+        presigned_url = results[0]
+        presigned_thumbnail_url = results[1] if len(results) > 1 else None
+
+        return SourceAssetLinkResponse(
+            **link.model_dump(),
+            presigned_url=presigned_url,
+            presigned_thumbnail_url=presigned_thumbnail_url,
+            gcs_uri=asset_doc.gcs_uri,
+            mime_type=asset_doc.mime_type,
+        )
 
     async def _enrich_source_media_item_link(
         self,
-        link: Any,
+        link: SourceMediaItemLink,
     ) -> SourceMediaItemLinkResponse | None:
         """Fetches the parent MediaItem document and generates a presigned URL
         for the specific image that was used as input.
         """
-        try:
-            media_item_id = (
-                getattr(link, "media_item_id", None)
-                if not isinstance(link, dict)
-                else link.get("media_item_id")
-            )
-            media_index = (
-                getattr(link, "media_index", 0)
-                if not isinstance(link, dict)
-                else link.get("media_index", 0)
-            )
-            if not media_item_id or not isinstance(media_item_id, int):
-                return None
+        parent_item = await self.media_repo.get_by_id(link.media_item_id)
+        if (
+            not parent_item
+            or not parent_item.gcs_uris
+            or not (0 <= link.media_index < len(parent_item.gcs_uris))
+        ):
+            return None
 
-            parent_item = await self.media_repo.get_by_id(media_item_id)
-            if (
-                not parent_item
-                or not parent_item.gcs_uris
-                or not (0 <= media_index < len(parent_item.gcs_uris))
-            ):
-                return None
+        # Get the specific GCS URI of the parent image that was edited.
+        parent_gcs_uri = parent_item.gcs_uris[link.media_index]
 
-            parent_gcs_uri = parent_item.gcs_uris[media_index]
-            tasks = [
+        # Prepare tasks for both the main media and its thumbnail
+        tasks = [
+            asyncio.to_thread(
+                self.iam_signer_credentials.generate_presigned_url,
+                parent_gcs_uri,
+            ),
+        ]
+
+        parent_thumbnail_gcs_uri = None
+        if parent_item.thumbnail_uris and 0 <= link.media_index < len(
+            parent_item.thumbnail_uris,
+        ):
+            parent_thumbnail_gcs_uri = parent_item.thumbnail_uris[
+                link.media_index
+            ]
+            tasks.append(
                 asyncio.to_thread(
                     self.iam_signer_credentials.generate_presigned_url,
-                    parent_gcs_uri,
+                    parent_thumbnail_gcs_uri,
                 ),
-            ]
-
-            if parent_item.thumbnail_uris and 0 <= media_index < len(
-                parent_item.thumbnail_uris
-            ):
-                parent_thumbnail_gcs_uri = parent_item.thumbnail_uris[
-                    media_index
-                ]
-                tasks.append(
-                    asyncio.to_thread(
-                        self.iam_signer_credentials.generate_presigned_url,
-                        parent_thumbnail_gcs_uri,
-                    ),
-                )
-
-            results = await asyncio.gather(*tasks)
-            presigned_url = results[0]
-            presigned_thumbnail_url = results[1] if len(results) > 1 else None
-
-            dump_data = (
-                link.model_dump()
-                if hasattr(link, "model_dump")
-                else (link if isinstance(link, dict) else {})
             )
-            return SourceMediaItemLinkResponse(
-                **dump_data,
-                presigned_url=presigned_url,
-                presigned_thumbnail_url=presigned_thumbnail_url,
-                gcs_uri=parent_gcs_uri,
-                mime_type=parent_item.mime_type,
-            )
-        except Exception as e:
-            logger.warning(f"Error enriching source media item link: {e}")
-            return None
+
+        results = await asyncio.gather(*tasks)
+        presigned_url = results[0]
+        presigned_thumbnail_url = results[1] if len(results) > 1 else None
+
+        return SourceMediaItemLinkResponse(
+            **link.model_dump(),
+            presigned_url=presigned_url,
+            presigned_thumbnail_url=presigned_thumbnail_url,
+            gcs_uri=parent_gcs_uri,
+            mime_type=parent_item.mime_type,
+        )
 
     async def _create_gallery_response(
         self, item: MediaItemModel

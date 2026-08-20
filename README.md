@@ -64,11 +64,6 @@ Creative Studio goes beyond simple demos, implementing advanced, real-world feat
 
 - Includes functionality for seeding system-level assets like garments and models, laying the groundwork for virtual try-on applications.
 
-**💬 Video Subtitles Studio (Custom Extensions):**
-
-- Integrated custom client navigation layout and standalone Subtitles studio view.
-- High-performance backend engine (`/api/v1/custom/subtitles`) powered by GCP Speech-to-Text v2 (`chirp_3`), Gemini Flash LLM subtitle formatting (<= 42 chars/line constraint), WebVTT/SRT sidecar generation, and FFmpeg soft/hardburned video rendering.
-
 ## GenMedia Screenshots | Creative Studio
 
 <p align="center">

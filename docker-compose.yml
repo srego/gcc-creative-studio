@@ -39,7 +39,6 @@ services:
     volumes:
       # Mount your local backend source code into the container
       - ./backend:/app
-      - ./output_subtitles:/app/output_subtitles
       # KEEP THIS: It preserves the virtual environment from the image build.
       - backend_venv:/app/.venv
       # Mount the gcloud ADC directory. Replace with the correct path for your OS if different. :ro - read-only for better security
