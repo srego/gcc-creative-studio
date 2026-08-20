@@ -150,8 +150,18 @@ const routes: Routes = [
 #### Stage 2.2 Recipe Prompt
 ```text
 # STAGE 2.2: BACKEND ADK AGENT & FASTAPI ROUTER IMPLEMENTATION + ASSESSOR TRIAGE MATRIX
-Implement the backend ADK domain files (agent.py, schemas.py, router.py) and update docs/CREATIVE_STUDIO_MOD.md with the actionable Pre-Flight Triage Matrix.
+Add google-adk dependency and synchronize lockfile (uv add google-adk && uv lock), implement the backend ADK domain files (agent.py, schemas.py, router.py), and update docs/CREATIVE_STUDIO_MOD.md with the actionable Pre-Flight Triage Matrix.
 ```
+
+#### Step 1: Add Dependencies & Synchronize Lockfile
+Add the `google-adk` dependency and immediately synchronize `uv.lock`:
+```bash
+cd backend
+uv add google-adk && uv lock
+```
+
+> [!IMPORTANT]
+> The backend container (`Dockerfile`) runs `uv sync --locked --no-dev` for strict reproducible builds. Always execute `uv lock` whenever `pyproject.toml` dependencies are modified to regenerate `uv.lock` and avoid container build failures.
 
 #### Complete Implementation Code Blocks
 
@@ -1537,6 +1547,7 @@ jobs:
 
 | Domain / Area | Issue / Symptom | Root Cause | Verified Resolution |
 |---|---|---|---|
+| **Container Build Packaging** | `error: The lockfile at uv.lock is out of sync with pyproject.toml` during `uv sync --locked` | `backend/Dockerfile` runs strict locked sync; modifying dependencies without `uv lock` causes container build failure. | Execute `uv lock` in `backend/` to regenerate `uv.lock` before pushing commits. |
 | **ADK Version Handling** | `DeprecationWarning: BaseAgentConfig is deprecated` | In recent Google ADK releases, configuration schemas load via reflection rather than static config classes. | Define agents directly via `Agent(name=..., model=..., instruction=...)` without initializing deprecated `BaseAgentConfig` objects. |
 | **CORS Configuration** | Browser blocks `OPTIONS /custom/adk-assistant/chat` (CORS Preflight Error) | Custom router mounted with `/api/` prefix or CORS origins missing local dev ports. | Ensure `configure_cors(app)` runs in `backend/main.py` before router mounting, and use the standard prefix `/api/custom/adk-assistant` with Angular proxy forwarding. |
 | **Session State Persistence** | Context lost between subsequent chat turns in multi-worker deployment | `InMemorySessionService` stores sessions locally in Python process memory; Cloud Run or multi-worker Gunicorn spawns independent memories. | In single-instance dev, `InMemorySessionService` maintains turn state per `sessionId`. For multi-instance production, plug a persistent Redis/Firestore `SessionService` into the `Runner(session_service=...)`. |
