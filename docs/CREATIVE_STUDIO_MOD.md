@@ -1,42 +1,57 @@
-# Creative Studio Mod Guide: Extending Creative Studio While Keeping Core Updated
+# OCE Creative Studio Mod Guide (v3): Extending Creative Studio While Keeping Core Updated
 
 # PRE-FLIGHT CHECK: CREATIVE STUDIO EXTENSION COMPATIBILITY ASSESSOR & TRIAGE MATRIX
 
-Before applying custom extensions, execute the following triage invariant checks to verify integration baselines and resolve upstream drift:
+Before applying custom extensions or syncing with upstream, execute the following 7 invariant checks to verify integration baselines and resolve upstream drift:
 
 | # | Invariant Check | CLI Verification Command | Expected Baseline | If Upstream Drift Detected (Remediation) |
 |---|---|---|---|---|
 | **1** | **Frontend Routing Pattern** | `test -f frontend/src/app/app-routing.module.ts && echo "NgModule" \|\| echo "Standalone"` | File exists (`app-routing.module.ts`) using Angular `Routes` array. | **If Standalone (`app.routes.ts`):** Register the route `{ path: 'custom/adk-assistant', loadComponent: () => import(...) }` in `frontend/src/app/app.routes.ts` instead of `app-routing.module.ts`. |
-| **2** | **Navigation Container & Anchor Position** | `grep -n "routerLink" frontend/src/app/header/header.component.html` | Top navigation toolbar with floating circular icon items. Custom user navigation icons MUST be anchored inside the main navigation cluster immediately preceding the `/gallery` routerLink (`<div routerLink="/gallery"...`). | **If Nav Moved to Sidebar (`sidebar.component.html`):** Place the `<mat-icon>auto_awesome</mat-icon>` button inside the sidebar menu list item rather than the header, maintaining placement immediately preceding the gallery item. |
-| **3** | **Backend Router Hook** | `grep -n "app.include_router" backend/main.py` | `main.py` initializes FastAPI and mounts routers via `app.include_router(...)`. | **If Factory Pattern (`create_app()`):** Mount `app.include_router(adk_assistant_router)` inside the application factory function in `backend/main.py`. |
-| **4** | **Python Package Manager** | `which uv && uv --version` | `uv` package manager installed (Python 3.12+ runtime). | **If Using Poetry/Pipenv:** Run `poetry add google-adk` or `pip install google-adk` instead of `uv add`. |
+| **2** | **Navigation Container, Responsive Classes & Hover Ownership** | `git grep -n "routerLink=\"/gallery\"" frontend/src/app/header/header.component.html` | Floating sidebar menu with responsive icon containers (`md:w-14 md:h-14 w-10 h-10`, inner icon `left-[9px] top-[9px] md:left-[16px] md:top-[16px]`). Custom user navigation icons MUST be anchored inside the main navigation cluster immediately preceding the `/gallery` routerLink (`<div routerLink="/gallery"...`). | **If Adding a Flyout Panel:** Attach `(mouseenter)` and `(mouseleave)` ONLY on the outer `relative flex` wrapper div—never duplicate them on the inner flyout panel (a second `mouseleave` per exit orphans the close timer). **If Nav Moved to Sidebar (`sidebar.component.html`):** Place the button inside the sidebar menu list immediately preceding the gallery item. |
+| **3** | **Backend Router Hook & EOF Placement** | `git grep -n "app.include_router" backend/main.py` | `main.py` initializes FastAPI and mounts routers via `app.include_router(...)` at EOF. | **On Upstream Merge Conflict at EOF:** Keep all new upstream router imports/mounts (e.g., `agent_router`, `project_router`, `folder_router`) and place `app.include_router(adk_assistant_router)` as the final line. |
+| **4** | **Python Package Manager & Native `google-adk`** | `git grep -n "google-adk" backend/pyproject.toml && uv --version` | `uv` package manager installed (Python 3.12+ runtime). Upstream `backend/pyproject.toml` natively includes `"google-adk>=2.3.0"` and `"google-cloud-aiplatform[adk]>=1.119.0"`. | **Avoid Duplicate EOF Dependencies:** Check if `google-adk` is already present in `backend/pyproject.toml` before running `uv add`. On `uv.lock` merge conflicts, never hand-edit the lockfile—run `git checkout --theirs backend/uv.lock && cd backend && uv lock`. |
+| **5** | **Root `GEMINI.md` Case-Insensitive Guard** | `git ls-files -i -o --exclude-standard "*gemini.md"` | Upstream tracks uppercase `GEMINI.md` at the repository root as its official developer/agent guide. | **Never Create Lowercase `gemini.md` at Root:** Creating `gemini.md` alongside `GEMINI.md` causes case-insensitive filesystem collisions on macOS/Windows and git status drift. Store custom agent instructions inside `docs/CREATIVE_STUDIO_MOD.md` or `backend/src/custom/<feature>/README.md`. |
+| **6** | **Cloud Build Trigger Substitution Compatibility (`_REGION` vs `_GCP_REGION`)** | `git grep -n "_GCP_REGION" backend/cloudbuild.yaml frontend/cloudbuild-deploy.yaml` | Upstream refactored `infra/` to `infrastructure/` and renamed `${_REGION}` to `${_GCP_REGION}` in `backend/cloudbuild.yaml` and `frontend/cloudbuild-deploy.yaml`. | **For Existing GCP Projects Provisioned Before `infrastructure/`:** Add default `substitutions: _GCP_REGION: 'us-central1'` and `options: substitution_option: 'ALLOW_LOOSE'` to both `backend/cloudbuild.yaml` and `frontend/cloudbuild-deploy.yaml` so existing Cloud Build triggers passing `_REGION` do not fail on push. |
+| **7** | **GitHub Fork Issues Enabled for CI/CD Alerting** | `gh repo view --json hasIssuesEnabled -q .hasIssuesEnabled` | Returns `true` so `.github/workflows/upstream-sync.yml` can open automated conflict alert issues. | **If `false` (Default on GitHub Forks):** Run `gh repo edit <owner>/<repo> --enable-issues` so the failure alert step does not fail with `HttpError 410: Issues has been disabled in this repository`. |
 
 ---
 
 ## 1. Executive Summary & Architecture
-This guide provides a paved, production-grade path to extend an existing Google Cloud Creative Studio instance with custom capabilities while preserving seamless upstream update and merge compatibility.
+This guide (v3) provides a paved, field-tested path for Outcome Customer Engineers (OCEs) and developers to partner with an AI coding agent to extend a Google Cloud Creative Studio instance with custom capabilities while preserving seamless upstream update and merge compatibility.
 
 ### Target Environment Details
 - **Base Upstream Repository:** `https://github.com/GoogleCloudPlatform/gcc-creative-studio.git`
-- **Active Working Branch:** `feature/adk-assistant`
-- **Target GCP Project ID:** `creative-studio-delta2`
+- **Active Working Branch:** `feature/adk-assistant` (synced to `main`)
+- **Target GCP Project ID:** `creative-studio-delta2` (`https://creative-studio-delta2.web.app/`)
 - **Target GCP Project Number:** `456871514227`
 
 ### The Rule of Isolation
-To eliminate merge conflicts during upstream updates, all custom features MUST reside strictly within dedicated `/custom/` namespaces:
+To minimize merge conflicts during upstream updates, all custom features MUST reside strictly within dedicated `/custom/` namespaces:
 - **Backend Custom Code:** `backend/src/custom/adk_assistant/`
 - **Frontend Custom Code:** `frontend/src/app/custom/adk_assistant/`
 - **Unit & Integration Tests:** `backend/tests/custom/adk_assistant/`
-- **Core Integration Constraint:** Never modify core business logic outside of `/custom/`. Core repository modifications are strictly restricted to exactly 3 minimal integration hooks:
+- **Core Integration Constraint:** Never modify core business logic, authentication guards, gallery services, or shared components outside of `/custom/`. Core repository modifications are strictly restricted to **3 minimal integration hooks**:
   1. `backend/main.py` (Router registration)
-  2. `frontend/src/app/app-routing.module.ts` (Route entry)
+  2. `frontend/src/app/app-routing.module.ts` (Route entry for standalone component)
   3. `frontend/src/app/header/header.component.html` (Navigation icon)
+
+### Empirical Field-Test Benchmark: Pre-Mod-Guide vs. Mod Guide Architecture
+During the October 2026 upstream synchronization (`169c42e..ad93919`, a major 230+ file upstream release introducing `agents`, `projects`, `folders`, `storyboard`, `infrastructure/`, and native `google-adk`), we benchmarked two live customer/demo instances side-by-side:
+
+| Metric | Instance 1 (`creative-studio-delta` — Video Subtitles) | Instance 2 (`creative-studio-delta2` — ADK Assistant) |
+|---|---|---|
+| **Architecture Pattern** | Built *before* the Mod Guide (modified `auth_guard.py`, `gallery_service.py`, `app.module.ts`, `auth.interceptor.ts`, `media-lightbox`, `media-detail`, `header.component.ts`) | Built *with* the Mod Guide (strictly isolated in `/custom/adk_assistant/` + 3 minimal core hooks) |
+| **Total Merge Conflicts across 230+ Upstream Files** | **14 conflicts** (including deep AST/logic conflicts in auth, gallery enrichment, NgModule declarations, and lightbox templates) | **4 trivial EOF/lockfile conflicts** (`.gitignore`, `backend/main.py`, `backend/pyproject.toml`, `backend/uv.lock`) |
+| **Conflicts in `app-routing.module.ts` & `header.component.html`** | **2 conflicts** (plus `app.module.ts` and `header.component.ts`) | **0 conflicts** (Git auto-merged both hooks cleanly) |
+| **Resolution & Verification Time** | ~25 minutes of manual AST/template reconciliation | **< 2 minutes** (automated lockfile regen + EOF append) |
 
 ```
 gcc-creative-studio/
 ├── .github/workflows/
 │   └── upstream-sync.yml                        # Automated CI/CD Upstream Sync & Conflict Alerting
+├── GEMINI.md                                    # Upstream AI Agent & Developer Guide (DO NOT create lowercase gemini.md)
 ├── backend/
+│   ├── cloudbuild.yaml                          # Includes _GCP_REGION default & ALLOW_LOOSE for trigger compatibility
 │   ├── main.py                                  # Core Hook 1: app.include_router(adk_assistant_router)
 │   ├── src/
 │   │   └── custom/
@@ -51,6 +66,7 @@ gcc-creative-studio/
 │               ├── __init__.py
 │               └── test_adk_assistant.py        # Pytest test suite (99% coverage)
 └── frontend/
+    ├── cloudbuild-deploy.yaml                   # Includes _GCP_REGION default & ALLOW_LOOSE for trigger compatibility
     └── src/
         └── app/
             ├── app-routing.module.ts            # Core Hook 2: /custom/adk-assistant route
@@ -68,9 +84,13 @@ gcc-creative-studio/
 
 ## 2. Prerequisites & Initial Setup
 - Creative Studio is deployed on GCP project `creative-studio-delta2`.
-- Local tools verified: `gcloud`, `terraform` (v1.14.1+), `uv` (v0.6+), `node` (v18+), `npm` (v9+).
-- Python environment initialized with `uv sync --all-extras`.
-- Frontend dependencies installed with `npm ci` (or `npm install`).
+- Local tools verified: `gcloud`, `gh`, `terraform` (v1.14.1+), `uv` (v0.6+), `node` (v20+), `npm` (v10+).
+- Enable GitHub Issues on your fork so automated sync alerts work out of the box:
+  ```bash
+  gh repo edit <your-github-username>/gcc-creative-studio --enable-issues
+  ```
+- Python environment initialized with `cd backend && uv sync --all-extras`.
+- Frontend dependencies installed with `cd frontend && npm ci`.
 
 ---
 
@@ -81,24 +101,29 @@ gcc-creative-studio/
 #### Stage 2.1 Recipe Prompt
 ```text
 # STAGE 2.1: DOMAIN SCAFFOLDING & CORE INTEGRATION HOOKS
-Create the isolated domain structure under backend/src/custom/adk_assistant/, frontend/src/app/custom/adk_assistant/, and backend/tests/custom/adk_assistant/. Register the 3 minimal core integration hooks in backend/main.py, frontend/src/app/app-routing.module.ts, and frontend/src/app/header/header.component.html.
+Create the isolated domain structure under backend/src/custom/adk_assistant/, frontend/src/app/custom/adk_assistant/, and backend/tests/custom/adk_assistant/. Register the 3 minimal core integration hooks in backend/main.py, frontend/src/app/app-routing.module.ts, and frontend/src/app/header/header.component.html using standalone Angular component routing (do not touch app.module.ts) and upstream's responsive sidebar icon classes.
 ```
 
 #### Core Integration Hooks Implementation
 
 **1. Hook 1: Backend Router Mount (`backend/main.py`)**
 ```python
-# backend/main.py (imports)
+# backend/main.py (imports — place after core router imports)
 from src.custom.adk_assistant.router import (
     adk_assistant_router,
 )
 
-# backend/main.py (router inclusions)
-app.include_router(workbench_router)
+# backend/main.py (router inclusions — place at EOF)
+app.include_router(agent_router)
+app.include_router(project_router)
+app.include_router(folder_router)
 app.include_router(adk_assistant_router)
 ```
 
 **2. Hook 2: Frontend Route Registration (`frontend/src/app/app-routing.module.ts`)**
+> [!TIP]
+> Because `AdkAssistantComponent` is a **standalone** Angular component (`standalone: true`), you ONLY register it in `app-routing.module.ts`. You do **not** need to modify `frontend/src/app/app.module.ts`, avoiding a major source of upstream merge conflicts.
+
 ```typescript
 // frontend/src/app/app-routing.module.ts (imports)
 import {AdkAssistantComponent} from './custom/adk_assistant/adk-assistant.component';
@@ -117,21 +142,23 @@ const routes: Routes = [
 **3. Hook 3: Navigation Header Link (`frontend/src/app/header/header.component.html`)**
 
 > [!IMPORTANT]
-> Custom user navigation icons MUST be anchored inside the main navigation cluster immediately preceding the `/gallery` routerLink (`<div routerLink="/gallery"...`). They must not be placed near the admin/profile section at the bottom of the navigation bar.
+> 1. **Placement:** Custom user navigation icons MUST be anchored inside the main navigation cluster immediately preceding `<!-- 5th: Media Gallery -->` (`<div routerLink="/gallery"...`).
+> 2. **Responsive Sizing:** Use upstream's responsive classes `md:w-14 md:h-14 w-10 h-10` on the outer pill and `left-[9px] top-[9px] md:left-[16px] md:top-[16px]` on the icon wrapper (replacing the legacy fixed `w-14 h-14` and `md:mb-[10px]`).
+> 3. **Direct Button vs. Flyout Menu:** Using a direct `routerLink` button (shown below) requires **zero edits** to `header.component.ts`. If you instead build a hover flyout menu, attach `(mouseenter)` and `(mouseleave)` **only** to the outer `relative flex` wrapper—never duplicate them on the inner flyout panel.
 
 ```html
-<!-- frontend/src/app/header/header.component.html (placed immediately preceding the /gallery routerLink block) -->
+<!-- frontend/src/app/header/header.component.html (placed immediately preceding <!-- 5th: Media Gallery -->) -->
 <div
   routerLink="/custom/adk-assistant"
   matTooltip="ADK Assistant"
   matTooltipPosition="right"
-  class="md:mb-[10px] cursor-pointer w-14 h-14 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-2.5 overflow-hidden"
+  class="cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
 >
   <div
     *ngIf="router.isActive('/custom/adk-assistant', true)"
     class="flex-1 h-14 bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 rounded-full blur-[3px] backdrop-blur-md"
   ></div>
-  <div class="w-6 h-6 left-[16px] top-[16px] absolute overflow-hidden">
+  <div class="w-6 h-6 left-[9px] top-[9px] md:left-[16px] md:top-[16px] absolute overflow-hidden">
     <button
       matFab
       aria-label="ADK Assistant"
@@ -150,18 +177,20 @@ const routes: Routes = [
 #### Stage 2.2 Recipe Prompt
 ```text
 # STAGE 2.2: BACKEND ADK AGENT & FASTAPI ROUTER IMPLEMENTATION + ASSESSOR TRIAGE MATRIX
-Add google-adk dependency and synchronize lockfile (uv add google-adk && uv lock), implement the backend ADK domain files (agent.py, schemas.py, router.py), and update docs/CREATIVE_STUDIO_MOD.md with the actionable Pre-Flight Triage Matrix.
+Verify google-adk dependency in backend/pyproject.toml (update in-place if needed, never duplicate at EOF) and synchronize lockfile (uv lock), implement the backend ADK domain files (agent.py, schemas.py, router.py), and update docs/CREATIVE_STUDIO_MOD.md with the Pre-Flight Triage Matrix.
 ```
 
-#### Step 1: Add Dependencies & Synchronize Lockfile
-Add the `google-adk` dependency and immediately synchronize `uv.lock`:
+#### Step 1: Verify Dependencies & Synchronize Lockfile
+Upstream Creative Studio (`ad93919+`) now includes `"google-adk>=2.3.0"` and `"google-cloud-aiplatform[adk]>=1.119.0"` natively in `backend/pyproject.toml`. Verify its presence before adding packages, and synchronize `uv.lock`:
 ```bash
 cd backend
-uv add google-adk && uv lock
+git grep "google-adk" pyproject.toml || uv add "google-adk>=2.3.0"
+uv lock && uv sync --all-extras
 ```
 
 > [!IMPORTANT]
-> The backend container (`Dockerfile`) runs `uv sync --locked --no-dev` for strict reproducible builds. Always execute `uv lock` whenever `pyproject.toml` dependencies are modified to regenerate `uv.lock` and avoid container build failures.
+> - **Avoid Duplicate Lines at EOF:** Never append a second `"google-adk..."` line at the bottom of `dependencies = [...]` in `backend/pyproject.toml` if upstream already declares it higher in the list.
+> - **Reproducible Container Builds:** `backend/Dockerfile` runs `uv sync --locked --no-dev`. Always run `uv lock` whenever `pyproject.toml` changes.
 
 #### Complete Implementation Code Blocks
 
@@ -1084,7 +1113,7 @@ export class AdkAssistantComponent implements OnInit, AfterViewChecked {
 #### Stage 2.4 Recipe Prompt
 ```text
 # STAGE 2.4: VERIFICATION, AUTOMATED TESTING & HARDENING
-Implement the full pytest test suite in backend/tests/custom/adk_assistant/test_adk_assistant.py, execute tests with coverage validation, verify container and build packaging for /custom/ domains, update the master guide docs/CREATIVE_STUDIO_MOD.md, and record post-execution debrief.
+Implement the full pytest test suite in backend/tests/custom/adk_assistant/test_adk_assistant.py, execute tests with coverage validation, verify container and Cloud Build trigger compatibility for /custom/ domains, and update docs/CREATIVE_STUDIO_MOD.md.
 ```
 
 #### Test Suite Implementation (`backend/tests/custom/adk_assistant/test_adk_assistant.py`)
@@ -1326,10 +1355,8 @@ if __name__ == "__main__":
 platform linux -- Python 3.13.14, pytest-9.0.2, pluggy-1.6.0 -- /usr/local/google/home/sergiorego/creative_studio_mod_guide/gcc-creative-studio/backend/.venv/bin/python3
 cachedir: .pytest_cache
 rootdir: /usr/local/google/home/sergiorego/creative_studio_mod_guide/gcc-creative-studio/backend
-configfile: pytest.ini
+configfile: pyproject.toml
 plugins: anyio-4.12.0, cov-7.0.0, asyncio-1.3.0
-asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collecting ...
 collected 7 items
 
 tests/custom/adk_assistant/test_adk_assistant.py::TestAdkAssistantSuite::test_agent_initialization PASSED [ 14%]
@@ -1351,16 +1378,24 @@ src/custom/adk_assistant/router.py        46      1    98%   134
 src/custom/adk_assistant/schemas.py       36      0   100%
 --------------------------------------------------------------------
 TOTAL                                     91      1    99%
-======================== 7 passed, 2 warnings in 0.22s =========================
+======================== 7 passed, 2 warnings in 0.19s =========================
 ```
 
-#### Container Packaging & Build Verification
+#### Container Packaging & Cloud Build Trigger Compatibility
 - **Backend Dockerfile (`backend/Dockerfile`):**
   Uses `COPY . /app` and `uv sync --locked --no-dev`. Custom domain modules under `backend/src/custom/` are bundled directly into the container image with zero custom Dockerfile edits.
 - **Frontend Dockerfile (`frontend/Dockerfile`):**
   Uses multi-stage build (`npm run build-dev`) producing nginx static distribution assets. Standalone Angular components under `frontend/src/app/custom/` compile natively.
-- **TypeScript Static Compilation:**
-  `npm run compile` (`tsc --noEmit`) validates all components and services with 0 errors.
+- **Cloud Build Trigger Substitution Compatibility (`backend/cloudbuild.yaml` & `frontend/cloudbuild-deploy.yaml`):**
+  Upstream migrated `infra/` to `infrastructure/` and renamed the Cloud Build substitution variable `${_REGION}` to `${_GCP_REGION}`. For existing GCP projects whose Cloud Build triggers were provisioned prior to this migration (passing `_REGION`), ensure both `backend/cloudbuild.yaml` and `frontend/cloudbuild-deploy.yaml` include a default `_GCP_REGION: 'us-central1'` substitution and `substitution_option: 'ALLOW_LOOSE'`:
+  ```yaml
+  substitutions:
+    _GCP_REGION: 'us-central1'
+
+  options:
+    logging: CLOUD_LOGGING_ONLY
+    substitution_option: 'ALLOW_LOOSE'
+  ```
 
 ---
 
@@ -1369,10 +1404,10 @@ TOTAL                                     91      1    99%
 #### Stage 2.5 Recipe Prompt
 ```text
 # STAGE 2.5: UPSTREAM SYNC CI/CD WORKFLOW & MASTER PLAYBOOK FINALIZATION
-Implement the automated GitHub Actions upstream sync workflow file (.github/workflows/upstream-sync.yml) with scheduled cron execution, dry-run merge conflict detection, backend pytest execution, frontend TypeScript compilation, and automated issue creation upon regression. Finalize docs/CREATIVE_STUDIO_MOD.md as the master enablement playbook.
+Enable GitHub Issues on the fork (gh repo edit --enable-issues) and implement the hardened automated GitHub Actions upstream sync workflow (.github/workflows/upstream-sync.yml) with scheduled cron execution, dry-run merge conflict detection, backend pytest execution, frontend TypeScript compilation (Node 20), and resilient try/catch issue alerting + job summary fallback.
 ```
 
-#### GitHub Actions Upstream Sync Workflow (`.github/workflows/upstream-sync.yml`)
+#### Hardened GitHub Actions Upstream Sync Workflow (`.github/workflows/upstream-sync.yml`)
 ```yaml
 # Copyright 2026 Google LLC
 #
@@ -1388,11 +1423,11 @@ Implement the automated GitHub Actions upstream sync workflow file (.github/work
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Upstream Sync & Conflict Check
+name: Upstream Sync & Compatibility Check
 
 on:
   schedule:
-    - cron: '0 4 * * 1' # Runs weekly on Mondays at 04:00 UTC
+    - cron: '0 6 * * 1' # Weekly on Mondays at 06:00 UTC
   workflow_dispatch:
 
 permissions:
@@ -1402,19 +1437,19 @@ permissions:
 
 jobs:
   sync-upstream:
-    name: Sync Upstream & Verify Domain Integrity
+    name: Sync Upstream & Verify Custom Domain Integrity
     runs-on: ubuntu-latest
     env:
       PROJECT_ID: 'dummy-project-id'
 
     steps:
-      - name: Checkout working branch
+      - name: Checkout target branch
         uses: actions/checkout@v4
         with:
           ref: feature/adk-assistant
           fetch-depth: 0
 
-      - name: Configure upstream remote
+      - name: Configure Git and Upstream Remote
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -1424,21 +1459,21 @@ jobs:
       - name: Dry-run merge check
         id: merge_check
         run: |
-          echo "Executing dry-run merge of upstream/main to detect merge conflicts or drift..."
+          echo "Executing non-commit dry-run merge of upstream/main..."
           if ! git merge --no-commit --no-ff upstream/main; then
             echo "::error::Merge conflict detected between upstream/main and feature/adk-assistant!"
+            git diff --name-only --diff-filter=U || true
             git merge --abort || true
             exit 1
           fi
           git merge --abort || true
-          echo "Upstream main is cleanly mergeable with feature/adk-assistant."
+          echo "Upstream main merges cleanly with feature/adk-assistant."
 
-      - name: Execute upstream merge
+      - name: Merge upstream changes
         run: |
-          echo "Merging upstream/main into feature/adk-assistant..."
           git merge upstream/main -m "chore(sync): merge upstream/main into feature/adk-assistant" --no-edit
 
-      - name: Set up Python
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -1449,32 +1484,38 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "backend/uv.lock"
 
-      - name: Install backend dependencies
+      - name: Install Backend Dependencies
         run: |
           cd backend
           uv sync --all-extras
 
-      - name: Run Backend & Custom Domain Tests
+      - name: Run Custom Domain Pytest Suite
         run: |
           cd backend
           uv run pytest tests/custom/adk_assistant/ -v --cov=src/custom/adk_assistant
 
-      - name: Setup Node.js
+      - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install frontend dependencies
+      - name: Install Frontend Dependencies
         run: |
           cd frontend
           npm ci
 
-      - name: Run Frontend Compilation Check
+      - name: Run Frontend TypeScript Compilation Check
         run: |
           cd frontend
           npm run compile
+
+      - name: Push Merged Changes to Origin
+        if: success()
+        run: |
+          git push origin feature/adk-assistant
+          git push origin feature/adk-assistant:main
 
       - name: Create GitHub Issue Alert on Failure
         if: failure()
@@ -1482,25 +1523,31 @@ jobs:
         with:
           script: |
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const issueTitle = `🚨 [Upstream Sync Alert] Conflict or Test Failure Detected on ${context.ref}`;
-            const issueBody = `### Upstream Sync Automated Failure Report\n\n` +
-              `An automated upstream synchronization workflow run has **failed** on branch \`${context.ref}\`.\n\n` +
-              `- **Run URL:** [View Workflow Run Details](${runUrl})\n` +
-              `- **Trigger:** \`${context.eventName}\`\n` +
+            const issueTitle = `🚨 [Upstream Sync Alert] Conflict or Test Failure on ${context.ref}`;
+            const issueBody = `### Automated Upstream Synchronization Failure\n\n` +
+              `The scheduled upstream sync workflow encountered a merge conflict or test failure on branch \`${context.ref}\`.\n\n` +
+              `- **Workflow Run:** [View Logs](${runUrl})\n` +
+              `- **Trigger Event:** \`${context.eventName}\`\n` +
               `- **Commit SHA:** \`${context.sha}\`\n` +
-              `- **Upstream Repository:** \`GoogleCloudPlatform/gcc-creative-studio:main\`\n\n` +
-              `### Required Action Items:\n` +
-              `1. Check if merge conflicts occurred between \`upstream/main\` and \`feature/adk-assistant\`.\n` +
-              `2. Verify if breaking upstream changes impacted \`backend/src/custom/adk_assistant/\` or \`frontend/src/app/custom/adk_assistant/\`.\n` +
-              `3. Re-run local test validation via \`uv run pytest tests/custom/adk_assistant/\` and \`npm run compile\` in \`frontend\`.\n`;
-            
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: issueTitle,
-              body: issueBody,
-              labels: ['upstream-sync', 'automated-alert', 'bug']
-            });
+              `- **Upstream Source:** \`GoogleCloudPlatform/gcc-creative-studio:main\`\n\n` +
+              `### Remediation Steps (See \`docs/CREATIVE_STUDIO_MOD.md\` Section 4):\n` +
+              `1. Run \`git fetch upstream main && git merge --no-commit --no-ff upstream/main\` locally.\n` +
+              `2. If \`backend/uv.lock\` conflicts, run \`git checkout --theirs backend/uv.lock && cd backend && uv lock\`.\n` +
+              `3. Verify the 3 core hooks (\`backend/main.py\`, \`frontend/src/app/app-routing.module.ts\`, \`frontend/src/app/header/header.component.html\`).\n` +
+              `4. Validate with \`cd backend && uv run pytest tests/custom/adk_assistant/\` and \`cd frontend && npm run compile\`.\n`;
+
+            await core.summary.addRaw(issueBody).write();
+
+            try {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: issueTitle,
+                body: issueBody
+              });
+            } catch (err) {
+              core.warning(`Could not create GitHub Issue (ensure Issues are enabled in repo settings via 'gh repo edit --enable-issues'): ${err.message}`);
+            }
 ```
 
 ---
@@ -1510,7 +1557,7 @@ jobs:
 ### Upstream Synchronization Cycle
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Weekly Cron Schedule (Mondays 04:00 UTC) / Manual Dispatch  │
+│ Weekly Cron Schedule (Mondays 06:00 UTC) / Manual Dispatch  │
 └──────────────────────────────┬──────────────────────────────┘
                                │
                                ▼
@@ -1527,31 +1574,59 @@ jobs:
              │ Clean                             │ Conflict Detected
              ▼                                   ▼
 ┌──────────────────────────────┐   ┌──────────────────────────────┐
-│ 3. Execute git merge upstream│   │ 3b. Abort merge              │
-│ 4. Run uv sync & Pytest (99%)│   │ 4b. Fail workflow step       │
-│ 5. Run npm compile           │   │ 5b. Auto-create GitHub Issue │
+│ 3. Execute git merge upstream│   │ 3b. Log conflicted file list │
+│ 4. Run uv sync & Pytest (99%)│   │ 4b. Abort merge & write      │
+│ 5. Run npm compile (Node 20) │   │     Step Summary             │
+│ 6. Auto-push to origin/main  │   │ 5b. Auto-create GitHub Issue │
 └──────────────────────────────┘   └──────────────────────────────┘
 ```
 
-### Conflict Resolution Protocol
-1. If the CI/CD workflow creates an automated conflict issue, check out `feature/adk-assistant` locally.
-2. Fetch and review upstream diffs: `git fetch upstream main && git merge --no-commit upstream/main`.
-3. If conflicts occur on core hook files (`backend/main.py`, `frontend/src/app/app-routing.module.ts`, or `header.component.html`), consult the **Pre-Flight Invariants & Triage Matrix** in Section 1.
-4. Keep all `/custom/` files untouched and re-apply hook registrations.
-5. Validate with `uv run pytest tests/custom/adk_assistant/ -v` and `npm run compile`.
-6. Commit the merge resolution and push to `origin/feature/adk-assistant`.
+### Fast-Path Conflict Resolution Protocol (Under 2 Minutes)
+Even with strict `/custom/` isolation, major upstream releases occasionally append lines at the very end of `.gitignore`, `backend/main.py`, or `backend/pyproject.toml` (`backend/uv.lock`). When the workflow alerts on an EOF/lockfile collision, give your AI agent (or execute) this 5-step recipe:
+
+1. **Fetch & Start Merge:**
+   ```bash
+   git checkout feature/adk-assistant
+   git fetch upstream main
+   git merge --no-commit --no-ff upstream/main
+   ```
+2. **Resolve Predictable EOF Collisions:**
+   - **`.gitignore`:** Keep both upstream's new ignore rules (e.g., `*.cstudio_bootstrap.conf`, `cstudio_profiles/`, `**/infrastructure/profiles/`) and your custom ignore entries.
+   - **`backend/main.py`:** Keep all new upstream router imports and `app.include_router(...)` calls, and keep `app.include_router(adk_assistant_router)` at the very end.
+   - **`backend/pyproject.toml`:** Keep upstream's updated dependency list. Do not duplicate `"google-adk"` at EOF if upstream already declares `"google-adk>=2.3.0"`.
+3. **Regenerate `backend/uv.lock` Automatically (Never Hand-Edit):**
+   ```bash
+   git checkout --theirs backend/uv.lock
+   cd backend && uv lock && uv sync --all-extras && cd ..
+   ```
+4. **Verify Custom Tests & Frontend Compilation:**
+   ```bash
+   cd backend && uv run pytest tests/custom/adk_assistant/ -v --cov=src/custom/adk_assistant && cd ..
+   cd frontend && npm run compile && cd ..
+   ```
+5. **Commit, Sync `main`, and Push:**
+   ```bash
+   git add -A
+   git commit -m "chore(sync): merge upstream/main into feature/adk-assistant"
+   git push origin feature/adk-assistant
+   git push origin feature/adk-assistant:main
+   ```
 
 ---
 
-## 5. Troubleshooting & Field Notes Matrix
+## 5. Troubleshooting & Field Notes Matrix (Updated for v3)
 
 | Domain / Area | Issue / Symptom | Root Cause | Verified Resolution |
 |---|---|---|---|
+| **GitHub Actions Alerting** | `RequestError [HttpError]: Issues has been disabled in this repository - status: 410` on failure step | GitHub disables Issues by default on forked repositories (`GoogleCloudPlatform/gcc-creative-studio` forks). | Run `gh repo edit <owner>/<repo> --enable-issues` once on the fork, and wrap `github.rest.issues.create` in a `try/catch` that always writes to `core.summary`. |
+| **Cloud Build Trigger Drift** | Push to GitHub fails Cloud Build with `key "_REGION" in the substitution data is not matched` or empty `${_GCP_REGION}` | Upstream migrated `infra/` to `infrastructure/` and renamed `${_REGION}` to `${_GCP_REGION}` in `backend/cloudbuild.yaml` and `frontend/cloudbuild-deploy.yaml`. | Add `substitutions: _GCP_REGION: 'us-central1'` and `options: substitution_option: 'ALLOW_LOOSE'` to both `backend/cloudbuild.yaml` and `frontend/cloudbuild-deploy.yaml`. |
+| **Dependency & Lockfile Drift** | `backend/pyproject.toml` and `backend/uv.lock` conflict during upstream merge | Upstream added `"google-adk>=2.3.0"` natively and bumped package versions in `pyproject.toml`. | Remove duplicate `google-adk` lines at EOF in `pyproject.toml`, then run `git checkout --theirs backend/uv.lock && cd backend && uv lock`. |
+| **Root `GEMINI.md` Collision** | Git status or checkout conflict between `gemini.md` and `GEMINI.md` | Upstream added an official uppercase `GEMINI.md` at the repo root. | Delete any lowercase `gemini.md` (`git rm gemini.md`) and keep custom extension docs inside `docs/CREATIVE_STUDIO_MOD.md`. |
+| **Sidebar Responsive Layout & Flyout Hover** | Custom sidebar icon is oversized on mobile (`w-14 h-14`) or custom flyout menu closes unexpectedly under pointer | Upstream updated sidebar icons to responsive `md:w-14 md:h-14 w-10 h-10` and removed duplicate `mouseleave` listeners on inner flyout divs. | Use `md:w-14 md:h-14 w-10 h-10` (`left-[9px] top-[9px] md:left-[16px] md:top-[16px]`) and attach `(mouseenter)`/`(mouseleave)` only to the outer `relative flex` wrapper. |
 | **Container Build Packaging** | `error: The lockfile at uv.lock is out of sync with pyproject.toml` during `uv sync --locked` | `backend/Dockerfile` runs strict locked sync; modifying dependencies without `uv lock` causes container build failure. | Execute `uv lock` in `backend/` to regenerate `uv.lock` before pushing commits. |
-| **ADK Version Handling** | `DeprecationWarning: BaseAgentConfig is deprecated` | In recent Google ADK releases, configuration schemas load via reflection rather than static config classes. | Define agents directly via `Agent(name=..., model=..., instruction=...)` without initializing deprecated `BaseAgentConfig` objects. |
-| **CORS Configuration** | Browser blocks `OPTIONS /custom/adk-assistant/chat` (CORS Preflight Error) | Custom router mounted with `/api/` prefix or CORS origins missing local dev ports. | Ensure `configure_cors(app)` runs in `backend/main.py` before router mounting, and use the standard prefix `/api/custom/adk-assistant` with Angular proxy forwarding. |
-| **Session State Persistence** | Context lost between subsequent chat turns in multi-worker deployment | `InMemorySessionService` stores sessions locally in Python process memory; Cloud Run or multi-worker Gunicorn spawns independent memories. | In single-instance dev, `InMemorySessionService` maintains turn state per `sessionId`. For multi-instance production, plug a persistent Redis/Firestore `SessionService` into the `Runner(session_service=...)`. |
-| **Angular Routing Guards** | Navigating to `/custom/adk-assistant` redirects to `/login` or blank screen | `canActivate: [AuthGuardService]` blocks unauthenticated route entry; or standalone component is missing necessary Angular imports. | Ensure test sessions are authenticated or pass token headers. In standalone components, explicitly import `CommonModule`, `FormsModule`, `MatIconModule`, and `MatButtonModule` in the `@Component` imports array. |
-| **FastAPI Middleware Stack** | Direct `TestClient(router)` raises `fastapi_middleware_astack not found` | In FastAPI 0.140+, passing an unmounted `APIRouter` to `TestClient` lacks application-level middleware context. | Instantiate a test application wrapper in unit test files: `app = FastAPI(); app.include_router(router); client = TestClient(app)`. |
-| **Pytest Runner Collection** | `PytestCollectionWarning: cannot collect test class 'TestApp'` | Test runner matches variables or instances starting with `test_` or `Test`. | Name test FastAPI application instance `app` instead of `test_app`. |
+| **ADK Version Handling** | `DeprecationWarning: BaseAgentConfig is deprecated` | In Google ADK 2.x, configuration schemas load via reflection rather than static config classes. | Define agents directly via `Agent(name=..., model=..., instruction=...)` without initializing deprecated `BaseAgentConfig` objects. |
+| **CORS Configuration** | Browser blocks `OPTIONS /custom/adk-assistant/chat` (CORS Preflight Error) | Custom router mounted before `configure_cors(app)` or missing `/api/` prefix. | Ensure `configure_cors(app)` runs in `backend/main.py` before router mounting, and use the standard prefix `/api/custom/adk-assistant`. |
+| **Session State Persistence** | Context lost between subsequent chat turns in multi-worker deployment | `InMemorySessionService` stores sessions locally in Python process memory. | In single-instance dev, `InMemorySessionService` maintains turn state per `sessionId`. For multi-instance production, plug a persistent Database/Vertex AI `SessionService` into `Runner(session_service=...)`. |
+| **Angular Standalone Routing** | `app.module.ts` conflicts when upstream adds new core components (`ProjectsComponent`, `StoryboardComponent`, etc.) | Declaring custom components inside `app.module.ts` `declarations: [...]` collides with upstream additions at the end of the array. | Mark custom components `standalone: true` and import their dependencies directly in `@Component({ imports: [...] })`. Register them only in `app-routing.module.ts`—never touch `app.module.ts`. |
+| **FastAPI Middleware Stack** | Direct `TestClient(router)` raises `fastapi_middleware_astack not found` | In FastAPI 0.118+, passing an unmounted `APIRouter` to `TestClient` lacks application-level middleware context. | Instantiate a test application wrapper in unit test files: `app = FastAPI(); app.include_router(router); client = TestClient(app)`. |
 | **Environment Isolation** | `ModuleNotFoundError: No module named 'google.adk'` when running global Python | Local Python environment does not have project dependencies installed globally. | Always execute commands through `uv run` (e.g., `uv run pytest`, `uv run python`) to execute within the project virtual environment. |
