@@ -2115,6 +2115,7 @@ def test_transcribe_chirp3_429_retry(tmp_path):
     service = SubtitleService()
     engine = service.engine
     engine.speech_client = MagicMock()
+    engine.storage_client = MagicMock()
     mock_op = MagicMock()
     mock_op.done.return_value = True
     mock_op.result.return_value = MagicMock()

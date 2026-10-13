@@ -35,12 +35,12 @@ export class AuthInterceptor implements HttpInterceptor {
     request: HttpRequest<unknown>,
     next: HttpHandler,
   ): Observable<HttpEvent<unknown>> {
+    const isBackendUrl =
+      request.url.startsWith('/') ||
+      (environment.backendURL.startsWith('http') &&
+        request.url.startsWith(environment.backendURL));
     // Skip Authorization header for Cloud Storage presigned URLs or external requests
-    if (
-      request.url.includes('storage.googleapis.com') ||
-      (!request.url.startsWith('/api') &&
-        !request.url.startsWith(environment.backendURL))
-    ) {
+    if (request.url.includes('storage.googleapis.com') || !isBackendUrl) {
       return next.handle(request);
     }
 
