@@ -1612,12 +1612,80 @@ Even with strict `/custom/` isolation, major upstream releases occasionally appe
    git push origin feature/adk-assistant:main
    ```
 
+### 4.3 Code-Only Syncs vs. Infrastructure Upstream Upgrades (`./bootstrap.sh --migrate-db`)
+When `upstream/main` only modifies application code (`backend/src/` and `frontend/src/`), merging and pushing to GitHub is all that is needed—Cloud Build automatically builds and deploys the updated containers.
+
+However, when an upstream release modifies **infrastructure or database topology** (`bootstrap.sh`, `infrastructure/`, `backend/src/database.py`, or `backend/alembic/env.py`), **a Git push alone is not enough**.
+
+1. **How to Detect an Upstream Infrastructure Upgrade:**
+   After merging `upstream/main`, check whether infrastructure or database connection files changed:
+   ```bash
+   git diff HEAD@{1}..HEAD -- bootstrap.sh infrastructure/ backend/src/database.py backend/alembic/env.py
+   ```
+   For example, in the V1 $\rightarrow$ V2 infrastructure release, upstream replaced `infra/` (Public IP Cloud SQL `creative-studio-db-*` + TCP-only Cloud Run probes) with `infrastructure/` (Private VPC IP Cloud SQL `cs-<env>-db-*`, HTTP `/api/health` startup probes, `agent_engine_resource_name` / `agent_engine_user_auth_token_key` secrets, and Vertex AI Izumi Agent Engine deployment) and switched `backend/src/database.py` from `IPTypes.PUBLIC` to `IPTypes.PRIVATE`.
+
+2. **What Happens If You Push Code Without Running `bootstrap.sh`:**
+   - Your existing Cloud Build trigger builds the new V2 backend container and deploys it onto the existing V1 Cloud Run service (`cstudio-be`).
+   - Gunicorn's master process binds TCP port `8080` (passing the V1 TCP startup check), while every Uvicorn worker crashes during FastAPI's `lifespan(app)` database migration step (`run_pending_migrations()`) with:
+     `google.cloud.sql.connector.exceptions.CloudSQLIPTypeError: Cloud SQL instance '...:us-central1:creative-studio-db-...' does not have any IP addresses matching preference: PRIVATE`
+   - When a user attempts to sign in on the frontend, `/api/users/me` fails with HTTP 502/503 and the browser displays:
+     `Could not synchronize user profile with the server. undefined`
+   - **Rule—Never Bandage Core Files:** Do **not** patch `backend/src/database.py` to fall back to `IPTypes.PUBLIC`. As a Creative Studio practitioner supporting customer implementations, keep core files 100% pure upstream and upgrade the project's infrastructure to match upstream's Private VPC architecture.
+
+3. **Zero-Data-Loss Infrastructure Upgrade Recipe (`./bootstrap.sh --migrate-db`):**
+   - **Step A: Re-authenticate GCP & Firebase CLI sessions:**
+     ```bash
+     gcloud auth login <your-gcp-admin-account>
+     gcloud auth application-default login
+     firebase login --reauth
+     ```
+   - **Step B: Configure a Persistent Profile (`~/.cstudio/profiles/<profile>.cstudio_bootstrap.conf`):**
+     Pre-populating all 11 deployment parameters enables `bootstrap.sh` to run end-to-end without manual prompts:
+     ```ini
+     PROFILE_INITIALIZED=true
+     GCP_PROJECT_ID=creative-studio-delta2
+     REPO_URL=https://github.com/srego/gcc-creative-studio.git
+     REPO_BRANCH=feature/adk-assistant
+     REPO_HOST=github.com
+     REPO_OWNER=srego
+     REPO_NAME=gcc-creative-studio
+     ENV_NAME=dev-infra
+     TF_BUCKET_NAME=creative-studio-delta2-cstudio-dev-infra-tfstate
+     REPO_CONN_NAME=github-connection
+     AUTO_OAUTH_CLIENT_ID=<your-oauth-client-id>.apps.googleusercontent.com
+     AUTO_FIREBASE_SITE_ID=creative-studio-delta2
+     DEPLOY_REGION=us-central1
+     DB_TIER=db-custom-2-7680
+     DB_AVAILABILITY=ZONAL
+     FIREBASE_TERMS_ACCEPTED=true
+     ```
+   - **Step C: Execute `bootstrap.sh` from the Parent Directory of Your `gcc-creative-studio` Clone:**
+     Because `setup_repo()` in `bootstrap.sh` looks for `./gcc-creative-studio` relative to the current working directory, always run it from the parent folder of your repo clone:
+     ```bash
+     cd /path/to/parent-of-repo
+     ./gcc-creative-studio/bootstrap.sh --profile delta2 --migrate-db --auto-approve --force-builds
+     ```
+     Passing `--migrate-db --auto-approve --force-builds` automatically:
+     1. Exports your existing V1 database (`creative-studio-db-*`) to `gs://<project>-cstudio-<env>-tfstate/migration_backup.sql.gz` (**Step 8**).
+     2. Deploys a safe dummy container (`us-docker.pkg.dev/cloudrun/container/hello`) to Cloud Run so live database connections do not deadlock Terraform VPC replacement (**Step 9**).
+     3. Applies V2 Terraform (`infrastructure/`), creating the Private VPC, Private IP Cloud SQL instance (`cs-<env>-db-*`), V2 Cloud Run services (`cs-<env>-backend`, `cs-<env>-frontend`), and V2 Cloud Build triggers (**Step 10**).
+     4. Restores `migration_backup.sql.gz` into the new Private VPC Cloud SQL instance (**Step 10 Import**).
+     5. Populates OAuth/Firebase secrets, triggers V2 frontend & backend Cloud Builds on `REPO_BRANCH`, runs the VPC serverless Alembic/seeding Cloud Run Job (`temp-db-bootstrap-job`), and deploys the Izumi Agent Engine to Vertex AI (**Steps 11–15**).
+
+4. **Multi-Instance Fork Hygiene (Keeping Multiple Demo Environments Separate):**
+   If you maintain multiple GCP projects backed by the same GitHub fork (`<owner>/gcc-creative-studio`):
+   - **Never share `REPO_BRANCH=main` across two GCP projects**, or pushing `main` for one environment will automatically trigger Cloud Build on the other environment.
+   - Assign each instance its own dedicated branch (e.g., `REPO_BRANCH=feature/adk-assistant` for `creative-studio-delta2` and `REPO_BRANCH=develop` for `creative-studio-delta`), its own local repository directory (so `infrastructure/<env>.tfvars` and `.terraform/` never collide), and its own `~/.cstudio/profiles/<name>.cstudio_bootstrap.conf` profile.
+
 ---
 
 ## 5. Troubleshooting & Field Notes Matrix (Updated for v3)
 
 | Domain / Area | Issue / Symptom | Root Cause | Verified Resolution |
 |---|---|---|---|
+| **Login / Profile Synchronization** | `"Could not synchronize user profile with the server. undefined"` on login after merging `upstream/main`; Cloud Run logs show `CloudSQLIPTypeError: ... does not have any IP addresses matching preference: PRIVATE` | Upstream V2 changed `backend/src/database.py` to `IPTypes.PRIVATE`, while the GCP project is still running V1 Public IP Cloud SQL (`creative-studio-db-*`) without running `bootstrap.sh`. | Do not patch `backend/src/database.py`. Run `./gcc-creative-studio/bootstrap.sh --profile <profile> --migrate-db --auto-approve --force-builds` to migrate Cloud SQL to Private VPC IP and provision V2 secrets and Izumi Agent Engine. |
+| **Upstream GitHub Actions Email** | GitHub email alert: `.github/workflows/infrastructure-tests.yml: No jobs were run` on push | Upstream committed `.github/workflows/infrastructure-tests.yml` with all 38 lines commented out (`#`). GitHub Actions treats an all-comment `.yml` workflow file as an empty workflow triggered on `push`. | Safe to ignore—Cloud Build handles all GCP container deployments, and this upstream placeholder workflow has zero impact on your app or `upstream-sync.yml`. |
+| **Multi-Instance Cross-Triggering** | Pushing to `main` on a shared fork unexpectedly triggers Cloud Build on a second Creative Studio GCP project | Both GCP projects had Cloud Build triggers configured to watch `main` on `<owner>/gcc-creative-studio`. | Point each GCP project's deployment profile (`REPO_BRANCH` in `~/.cstudio/profiles/<name>.cstudio_bootstrap.conf`) at its own dedicated branch (e.g., `feature/adk-assistant` vs. `develop`) and re-run `bootstrap.sh`. |
 | **GitHub Actions Alerting** | `RequestError [HttpError]: Issues has been disabled in this repository - status: 410` on failure step | GitHub disables Issues by default on forked repositories (`GoogleCloudPlatform/gcc-creative-studio` forks). | Run `gh repo edit <owner>/<repo> --enable-issues` once on the fork, and wrap `github.rest.issues.create` in a `try/catch` that always writes to `core.summary`. |
 | **Cloud Build Trigger Drift** | Push to GitHub fails Cloud Build with `key "_REGION" in the substitution data is not matched` or empty `${_GCP_REGION}` | Upstream migrated `infra/` to `infrastructure/` and renamed `${_REGION}` to `${_GCP_REGION}` in `backend/cloudbuild.yaml` and `frontend/cloudbuild-deploy.yaml`. | Add `substitutions: _GCP_REGION: 'us-central1'` and `options: substitution_option: 'ALLOW_LOOSE'` to both `backend/cloudbuild.yaml` and `frontend/cloudbuild-deploy.yaml`. |
 | **Dependency & Lockfile Drift** | `backend/pyproject.toml` and `backend/uv.lock` conflict during upstream merge | Upstream added `"google-adk>=2.3.0"` natively and bumped package versions in `pyproject.toml`. | Remove duplicate `google-adk` lines at EOF in `pyproject.toml`, then run `git checkout --theirs backend/uv.lock && cd backend && uv lock`. |
