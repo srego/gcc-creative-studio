@@ -105,10 +105,7 @@ export class HeaderComponent implements OnDestroy {
   ngOnDestroy(): void {
     this.clearGenMenuTimeout();
     this.clearToolsMenuTimeout();
-    if (this.customMenuTimeout !== null) {
-      clearTimeout(this.customMenuTimeout);
-      this.customMenuTimeout = null;
-    }
+    this.clearCustomMenuTimeout();
     this.destroy$.next();
     this.destroy$.complete();
   }
@@ -178,24 +175,31 @@ export class HeaderComponent implements OnDestroy {
     }
   }
 
+  private clearCustomMenuTimeout(): void {
+    if (this.customMenuTimeout !== null) {
+      clearTimeout(this.customMenuTimeout);
+      this.customMenuTimeout = null;
+    }
+  }
+
+  onCustomToolsEnter() {
+    this.clearCustomMenuTimeout();
+    this.customToolsMenuHovered = true;
+  }
+
+  onCustomToolsLeave() {
+    this.clearCustomMenuTimeout();
+    this.customMenuTimeout = setTimeout(() => {
+      this.customMenuTimeout = null;
+      this.customToolsMenuHovered = false;
+    }, HeaderComponent.MENU_CLOSE_DELAY_MS);
+  }
+
   private checkIsGalleryActive(): boolean {
     return (
       this.router.isActive('/gallery', false) ||
       this.router.url.startsWith('/folders/') ||
       this.router.url === '/folders'
     );
-  }
-
-  onCustomToolsEnter() {
-    if (this.customMenuTimeout) {
-      clearTimeout(this.customMenuTimeout);
-    }
-    this.customToolsMenuHovered = true;
-  }
-
-  onCustomToolsLeave() {
-    this.customMenuTimeout = setTimeout(() => {
-      this.customToolsMenuHovered = false;
-    }, 200);
   }
 }
