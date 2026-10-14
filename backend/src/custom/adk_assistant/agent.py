@@ -13,7 +13,19 @@
 # limitations under the License.
 """ADK Agent definition for Google Cloud Creative Studio AI Assistant."""
 
+import os
 from google.adk.agents import Agent
+
+# Bridge V2 Cloud Run environment variables (PROJECT_ID) to Google GenAI / ADK Vertex AI settings
+if not os.environ.get("GOOGLE_API_KEY") and not os.environ.get(
+    "GEMINI_API_KEY"
+):
+    os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "TRUE")
+    if os.environ.get("PROJECT_ID"):
+        os.environ.setdefault("GOOGLE_CLOUD_PROJECT", os.environ["PROJECT_ID"])
+    os.environ.setdefault(
+        "GOOGLE_CLOUD_LOCATION", os.environ.get("LOCATION", "global")
+    )
 
 AGENT_NAME = "creative_studio_assistant"
 AGENT_MODEL = "gemini-3.7-flash"

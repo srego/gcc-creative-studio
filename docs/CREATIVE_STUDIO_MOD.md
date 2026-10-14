@@ -14,8 +14,6 @@ Before applying custom extensions or syncing with upstream, execute the followin
 | **6** | **Cloud Build Trigger Substitution Compatibility (`_REGION` vs `_GCP_REGION`)** | `git grep -n "_GCP_REGION" backend/cloudbuild.yaml frontend/cloudbuild-deploy.yaml` | Upstream refactored `infra/` to `infrastructure/` and renamed `${_REGION}` to `${_GCP_REGION}` in `backend/cloudbuild.yaml` and `frontend/cloudbuild-deploy.yaml`. | **For Existing GCP Projects Provisioned Before `infrastructure/`:** Add default `substitutions: _GCP_REGION: 'us-central1'` and `options: substitution_option: 'ALLOW_LOOSE'` to both `backend/cloudbuild.yaml` and `frontend/cloudbuild-deploy.yaml` so existing Cloud Build triggers passing `_REGION` do not fail on push. |
 | **7** | **GitHub Fork Issues Enabled for CI/CD Alerting** | `gh repo view --json hasIssuesEnabled -q .hasIssuesEnabled` | Returns `true` so `.github/workflows/upstream-sync.yml` can open automated conflict alert issues. | **If `false` (Default on GitHub Forks):** Run `gh repo edit <owner>/<repo> --enable-issues` so the failure alert step does not fail with `HttpError 410: Issues has been disabled in this repository`. |
 
----
-
 ## 1. Executive Summary & Architecture
 This guide (v3) provides a paved, field-tested path for Outcome Customer Engineers (OCEs) and developers to partner with an AI coding agent to extend a Google Cloud Creative Studio instance with custom capabilities while preserving seamless upstream update and merge compatibility.
 
@@ -43,9 +41,9 @@ During the October 2026 upstream synchronization (`169c42e..ad93919`, a major 23
 | **Architecture Pattern** | Built *before* the Mod Guide (modified `auth_guard.py`, `gallery_service.py`, `app.module.ts`, `auth.interceptor.ts`, `media-lightbox`, `media-detail`, `header.component.ts`) | Built *with* the Mod Guide (strictly isolated in `/custom/adk_assistant/` + 3 minimal core hooks) |
 | **Total Merge Conflicts across 230+ Upstream Files** | **14 conflicts** (including deep AST/logic conflicts in auth, gallery enrichment, NgModule declarations, and lightbox templates) | **4 trivial EOF/lockfile conflicts** (`.gitignore`, `backend/main.py`, `backend/pyproject.toml`, `backend/uv.lock`) |
 | **Conflicts in `app-routing.module.ts` & `header.component.html`** | **2 conflicts** (plus `app.module.ts` and `header.component.ts`) | **0 conflicts** (Git auto-merged both hooks cleanly) |
-| **Resolution & Verification Time** | ~25 minutes of manual AST/template reconciliation | **< 2 minutes** (automated lockfile regen + EOF append) |
+| **Resolution & Verification Time** | ~25 minutes of manual AST/template reconciliation | **&lt; 2 minutes** (automated lockfile regen + EOF append) |
 
-```
+```bash
 gcc-creative-studio/
 ├── .github/workflows/
 │   └── upstream-sync.yml                        # Automated CI/CD Upstream Sync & Conflict Alerting
@@ -80,8 +78,6 @@ gcc-creative-studio/
                     └── adk-assistant.component.scss # Component styling & animations
 ```
 
----
-
 ## 2. Prerequisites & Initial Setup
 - Creative Studio is deployed on GCP project `creative-studio-delta2`.
 - Local tools verified: `gcloud`, `gh`, `terraform` (v1.14.1+), `uv` (v0.6+), `node` (v20+), `npm` (v10+).
@@ -92,14 +88,12 @@ gcc-creative-studio/
 - Python environment initialized with `cd backend && uv sync --all-extras`.
 - Frontend dependencies installed with `cd frontend && npm ci`.
 
----
-
 ## 3. The 5-Stage Agent Implementation Recipes
 
 ### Stage 2.1: Domain Scaffolding & Core Integration Hooks
 
 #### Stage 2.1 Recipe Prompt
-```text
+```bash
 # STAGE 2.1: DOMAIN SCAFFOLDING & CORE INTEGRATION HOOKS
 Create the isolated domain structure under backend/src/custom/adk_assistant/, frontend/src/app/custom/adk_assistant/, and backend/tests/custom/adk_assistant/. Register the 3 minimal core integration hooks in backend/main.py, frontend/src/app/app-routing.module.ts, and frontend/src/app/header/header.component.html using standalone Angular component routing (do not touch app.module.ts) and upstream's responsive sidebar icon classes.
 ```
@@ -121,8 +115,8 @@ app.include_router(adk_assistant_router)
 ```
 
 **2. Hook 2: Frontend Route Registration (`frontend/src/app/app-routing.module.ts`)**
-> [!TIP]
-> Because `AdkAssistantComponent` is a **standalone** Angular component (`standalone: true`), you ONLY register it in `app-routing.module.ts`. You do **not** need to modify `frontend/src/app/app.module.ts`, avoiding a major source of upstream merge conflicts.
+
+> **Tip:** Because `AdkAssistantComponent` is a **standalone** Angular component (`standalone: true`), you ONLY register it in `app-routing.module.ts`. You do **not** need to modify `frontend/src/app/app.module.ts`, avoiding a major source of upstream merge conflicts.
 
 ```typescript
 // frontend/src/app/app-routing.module.ts (imports)
@@ -141,7 +135,7 @@ const routes: Routes = [
 
 **3. Hook 3: Navigation Header Link (`frontend/src/app/header/header.component.html`)**
 
-> [!IMPORTANT]
+> **Important:**
 > 1. **Placement:** Custom user navigation icons MUST be anchored inside the main navigation cluster immediately preceding `<!-- 5th: Media Gallery -->` (`<div routerLink="/gallery"...`).
 > 2. **Responsive Sizing:** Use upstream's responsive classes `md:w-14 md:h-14 w-10 h-10` on the outer pill and `left-[9px] top-[9px] md:left-[16px] md:top-[16px]` on the icon wrapper (replacing the legacy fixed `w-14 h-14` and `md:mb-[10px]`).
 > 3. **Direct Button vs. Flyout Menu:** Using a direct `routerLink` button (shown below) requires **zero edits** to `header.component.ts`. If you instead build a hover flyout menu, attach `(mouseenter)` and `(mouseleave)` **only** to the outer `relative flex` wrapper—never duplicate them on the inner flyout panel.
@@ -170,12 +164,10 @@ const routes: Routes = [
 </div>
 ```
 
----
-
 ### Stage 2.2: Backend ADK Integration & FastAPI Router
 
 #### Stage 2.2 Recipe Prompt
-```text
+```bash
 # STAGE 2.2: BACKEND ADK AGENT & FASTAPI ROUTER IMPLEMENTATION + ASSESSOR TRIAGE MATRIX
 Verify google-adk dependency in backend/pyproject.toml (update in-place if needed, never duplicate at EOF) and synchronize lockfile (uv lock), implement the backend ADK domain files (agent.py, schemas.py, router.py), and update docs/CREATIVE_STUDIO_MOD.md with the Pre-Flight Triage Matrix.
 ```
@@ -188,7 +180,7 @@ git grep "google-adk" pyproject.toml || uv add "google-adk>=2.3.0"
 uv lock && uv sync --all-extras
 ```
 
-> [!IMPORTANT]
+> **Important:**
 > - **Avoid Duplicate Lines at EOF:** Never append a second `"google-adk..."` line at the bottom of `dependencies = [...]` in `backend/pyproject.toml` if upstream already declares it higher in the list.
 > - **Reproducible Container Builds:** `backend/Dockerfile` runs `uv sync --locked --no-dev`. Always run `uv lock` whenever `pyproject.toml` changes.
 
@@ -211,7 +203,19 @@ uv lock && uv sync --all-extras
 # limitations under the License.
 """ADK Agent definition for Google Cloud Creative Studio AI Assistant."""
 
+import os
 from google.adk.agents import Agent
+
+# Bridge V2 Cloud Run environment variables (PROJECT_ID) to Google GenAI / ADK Vertex AI settings
+if not os.environ.get("GOOGLE_API_KEY") and not os.environ.get(
+    "GEMINI_API_KEY"
+):
+    os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "TRUE")
+    if os.environ.get("PROJECT_ID"):
+        os.environ.setdefault("GOOGLE_CLOUD_PROJECT", os.environ["PROJECT_ID"])
+    os.environ.setdefault(
+        "GOOGLE_CLOUD_LOCATION", os.environ.get("LOCATION", "global")
+    )
 
 AGENT_NAME = "creative_studio_assistant"
 AGENT_MODEL = "gemini-3.7-flash"
@@ -502,12 +506,10 @@ adk_assistant_router = router
 | `/api/custom/adk-assistant/chat` | `POST` | Execute Multi-turn Chat | `QueryRequest` (`message`, `sessionId`, `history`, `context`) | `QueryResponse` (`response`, `sessionId`, `agentName`, `metadata`) | `400 Bad Request` (empty prompt)<br>`500 Internal Server Error` |
 | `/api/custom/adk-assistant/query` | `POST` | Legacy Query Endpoint Alias | `QueryRequest` (`prompt`, `sessionId`) | `QueryResponse` (`response`, `sessionId`, `agentName`) | `400 Bad Request`<br>`500 Internal Server Error` |
 
----
-
 ### Stage 2.3: Frontend Reactive UI & Client Service
 
 #### Stage 2.3 Recipe Prompt
-```text
+```bash
 # STAGE 2.3: FRONTEND REACTIVE UI & SERVICE IMPLEMENTATION
 Implement the Angular client service (adk-assistant.service.ts) and interactive chat UI component (adk-assistant.component.ts, .html, .scss) adhering to the Creative Studio UI design system (dark glassmorphism, Gemini Spectrum accents, live status pill, message thread, suggestion chips, clipboard copy, and thinking animation).
 ```
@@ -1106,12 +1108,10 @@ export class AdkAssistantComponent implements OnInit, AfterViewChecked {
 }
 ```
 
----
-
 ### Stage 2.4: Verification, Automated Testing & Hardening
 
 #### Stage 2.4 Recipe Prompt
-```text
+```bash
 # STAGE 2.4: VERIFICATION, AUTOMATED TESTING & HARDENING
 Implement the full pytest test suite in backend/tests/custom/adk_assistant/test_adk_assistant.py, execute tests with coverage validation, verify container and Cloud Build trigger compatibility for /custom/ domains, and update docs/CREATIVE_STUDIO_MOD.md.
 ```
@@ -1350,7 +1350,7 @@ if __name__ == "__main__":
 ```
 
 #### Actual Captured Pytest Execution Logs & Coverage Output
-```text
+```bash
 ============================= test session starts ==============================
 platform linux -- Python 3.13.14, pytest-9.0.2, pluggy-1.6.0 -- /usr/local/google/home/sergiorego/creative_studio_mod_guide/gcc-creative-studio/backend/.venv/bin/python3
 cachedir: .pytest_cache
@@ -1397,12 +1397,10 @@ TOTAL                                     91      1    99%
     substitution_option: 'ALLOW_LOOSE'
   ```
 
----
-
 ### Stage 2.5: Upstream Sync CI/CD Workflow & Maintenance
 
 #### Stage 2.5 Recipe Prompt
-```text
+```bash
 # STAGE 2.5: UPSTREAM SYNC CI/CD WORKFLOW & MASTER PLAYBOOK FINALIZATION
 Enable GitHub Issues on the fork (gh repo edit --enable-issues) and implement the hardened automated GitHub Actions upstream sync workflow (.github/workflows/upstream-sync.yml) with scheduled cron execution, dry-run merge conflict detection, backend pytest execution, frontend TypeScript compilation (Node 20), and resilient try/catch issue alerting + job summary fallback.
 ```
@@ -1550,35 +1548,20 @@ jobs:
             }
 ```
 
----
-
 ## 4. Automated Upstream Sync & Maintenance Operational Playbook
 
 ### Upstream Synchronization Cycle
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Weekly Cron Schedule (Mondays 06:00 UTC) / Manual Dispatch  │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ 1. Fetch upstream/main with full history depth (depth: 0)   │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ 2. Dry-Run Non-Commit Merge (git merge --no-commit --no-ff) │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-             ┌─────────────────┴─────────────────┐
-             │ Clean                             │ Conflict Detected
-             ▼                                   ▼
-┌──────────────────────────────┐   ┌──────────────────────────────┐
-│ 3. Execute git merge upstream│   │ 3b. Log conflicted file list │
-│ 4. Run uv sync & Pytest (99%)│   │ 4b. Abort merge & write      │
-│ 5. Run npm compile (Node 20) │   │     Step Summary             │
-│ 6. Auto-push to origin/main  │   │ 5b. Auto-create GitHub Issue │
-└──────────────────────────────┘   └──────────────────────────────┘
+```mermaid
+flowchart TD
+    A["Weekly Cron Schedule (Mondays 06:00 UTC) / Manual Dispatch"] --> B["1. Fetch upstream/main with full history depth (depth: 0)"]
+    B --> C["2. Dry-Run Non-Commit Merge (git merge --no-commit --no-ff)"]
+    C -->|Clean| D["3. Execute git merge upstream/main"]
+    D --> E["4. Run uv sync & Pytest (99% coverage)"]
+    E --> F["5. Run npm run compile (Node 20)"]
+    F --> G["6. Auto-push to origin/feature/adk-assistant & main"]
+    C -->|Conflict Detected| H["3b. Log conflicted file list & abort merge"]
+    H --> I["4b. Write Remediation Steps to GitHub Step Summary"]
+    I --> J["5b. Auto-create GitHub Issue Alert (try/catch guarded)"]
 ```
 
 ### Fast-Path Conflict Resolution Protocol (Under 2 Minutes)
@@ -1672,18 +1655,37 @@ However, when an upstream release modifies **infrastructure or database topology
      4. Restores `migration_backup.sql.gz` into the new Private VPC Cloud SQL instance (**Step 10 Import**).
      5. Populates OAuth/Firebase secrets, triggers V2 frontend & backend Cloud Builds on `REPO_BRANCH`, runs the VPC serverless Alembic/seeding Cloud Run Job (`temp-db-bootstrap-job`), and deploys the Izumi Agent Engine to Vertex AI (**Steps 11–15**).
 
+   - **Step D: Resuming After the `409 AlreadyExists` Cloud Build v2 Repository Race Condition:**
+     During a V1 to V2 Terraform upgrade, upstream moved `google_cloudbuildv2_repository.source_repo` out of `module.creative_studio_platform` to the root module without a `moved {}` block. On the first pass, Terraform may attempt to create the new `source_repo` a few seconds before the old one finishes destroying (`Error 409: Resource '.../repositories/gcc-creative-studio' already exists`). Simply re-run with `--use-existing-backup` (so it reuses your Step 8 SQL export without re-dumping):
+     ```bash
+     ./gcc-creative-studio/bootstrap.sh --profile delta2 --use-existing-backup --auto-approve --force-builds
+     ```
+   - **Step E: Post-Bootstrap Cloud Run IAM Proxy Configuration (`--no-invoker-iam-check`):**
+     Upstream commit `de90a787` removed `"run.googleapis.com/invoker-iam-disabled" = "true"` from `infrastructure/modules/compute/main.tf`. Under Google Cloud `Domain Restricted Sharing` org policies (where `allUsers` cannot be granted `roles/run.invoker`), leaving Cloud Run's IAM check enabled causes two issues:
+     1. Unauthenticated endpoints routed via Firebase Hosting (`/api/**`) return `403 Forbidden` from the Google Frontend proxy.
+     2. Even if `custom_audiences` is set and the caller has `roles/run.invoker`, Cloud Run's IAM proxy **strips the cryptographic signature** from the `Authorization: Bearer <JWT>` header (replacing it with `SIGNATURE_REMOVED_BY_GOOGLE`) before forwarding the request to the container—causing FastAPI's `id_token.verify_oauth2_token()` in `backend/src/auth/auth_guard.py` to fail with `HTTP 500: Could not verify token signature`.
+     Fix this cleanly at the Cloud Run service layer (requiring zero core code changes) by disabling the Cloud Run proxy IAM check so FastAPI's `auth_guard.py` receives and verifies the unmodified Google OAuth ID token directly:
+     ```bash
+     gcloud run services update cs-dev-infra-backend \
+       --no-invoker-iam-check \
+       --add-custom-audiences="<YOUR_OAUTH_CLIENT_ID>.apps.googleusercontent.com,<GCP_PROJECT_ID>" \
+       --region=us-central1 \
+       --project=<GCP_PROJECT_ID>
+     ```
+
 4. **Multi-Instance Fork Hygiene (Keeping Multiple Demo Environments Separate):**
    If you maintain multiple GCP projects backed by the same GitHub fork (`<owner>/gcc-creative-studio`):
    - **Never share `REPO_BRANCH=main` across two GCP projects**, or pushing `main` for one environment will automatically trigger Cloud Build on the other environment.
    - Assign each instance its own dedicated branch (e.g., `REPO_BRANCH=feature/adk-assistant` for `creative-studio-delta2` and `REPO_BRANCH=develop` for `creative-studio-delta`), its own local repository directory (so `infrastructure/<env>.tfvars` and `.terraform/` never collide), and its own `~/.cstudio/profiles/<name>.cstudio_bootstrap.conf` profile.
-
----
 
 ## 5. Troubleshooting & Field Notes Matrix (Updated for v3)
 
 | Domain / Area | Issue / Symptom | Root Cause | Verified Resolution |
 |---|---|---|---|
 | **Login / Profile Synchronization** | `"Could not synchronize user profile with the server. undefined"` on login after merging `upstream/main`; Cloud Run logs show `CloudSQLIPTypeError: ... does not have any IP addresses matching preference: PRIVATE` | Upstream V2 changed `backend/src/database.py` to `IPTypes.PRIVATE`, while the GCP project is still running V1 Public IP Cloud SQL (`creative-studio-db-*`) without running `bootstrap.sh`. | Do not patch `backend/src/database.py`. Run `./gcc-creative-studio/bootstrap.sh --profile <profile> --migrate-db --auto-approve --force-builds` to migrate Cloud SQL to Private VPC IP and provision V2 secrets and Izumi Agent Engine. |
+| **Cloud Run IAM Proxy / JWT Signature Stripping** | Login fails with `HTTP 500: Could not verify token signature` (or `403 Forbidden` on `/api/**` via Firebase Hosting) after V2 `bootstrap.sh` | Upstream commit `de90a787` removed `"run.googleapis.com/invoker-iam-disabled" = "true"`. When Cloud Run IAM check is enabled, GFE either blocks non-IAM callers (`403`) or redacts the JWT signature (`SIGNATURE_REMOVED_BY_GOOGLE`) before FastAPI's `auth_guard.py` verifies it. | Run `gcloud run services update cs-dev-infra-backend --no-invoker-iam-check --region=us-central1 --project=<project>` so Firebase Hosting rewrites pass the unmodified OAuth JWT directly to FastAPI's `auth_guard.py`. |
+| **Terraform V1 Upgrade Race** | `Error 409: Resource '.../repositories/gcc-creative-studio' already exists` during Step 10 of `bootstrap.sh --migrate-db` | Upstream moved `google_cloudbuildv2_repository.source_repo` out of `module.creative_studio_platform` to root without a `moved {}` block; create runs before destroy completes. | Re-run `./gcc-creative-studio/bootstrap.sh --profile <profile> --use-existing-backup --auto-approve --force-builds` to complete the remaining 3 resources using the existing SQL backup. |
+| **V2 Cloud Run Vertex AI ADK Env Vars** | Custom ADK agent fails with `No API key was provided. Please pass a valid API key` on V2 Cloud Run | V2 `infrastructure/app.tf` sets `PROJECT_ID` and `REGION` on `cs-dev-infra-backend`, whereas `google-adk` / `google-genai` looks for `GOOGLE_GENAI_USE_VERTEXAI=TRUE` and `GOOGLE_CLOUD_PROJECT`. | In `backend/src/custom/<feature>/agent.py`, bridge `os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "TRUE")` and `os.environ.setdefault("GOOGLE_CLOUD_PROJECT", os.environ["PROJECT_ID"])`. |
 | **Upstream GitHub Actions Email** | GitHub email alert: `.github/workflows/infrastructure-tests.yml: No jobs were run` on push | Upstream committed `.github/workflows/infrastructure-tests.yml` with all 38 lines commented out (`#`). GitHub Actions treats an all-comment `.yml` workflow file as an empty workflow triggered on `push`. | Safe to ignore—Cloud Build handles all GCP container deployments, and this upstream placeholder workflow has zero impact on your app or `upstream-sync.yml`. |
 | **Multi-Instance Cross-Triggering** | Pushing to `main` on a shared fork unexpectedly triggers Cloud Build on a second Creative Studio GCP project | Both GCP projects had Cloud Build triggers configured to watch `main` on `<owner>/gcc-creative-studio`. | Point each GCP project's deployment profile (`REPO_BRANCH` in `~/.cstudio/profiles/<name>.cstudio_bootstrap.conf`) at its own dedicated branch (e.g., `feature/adk-assistant` vs. `develop`) and re-run `bootstrap.sh`. |
 | **GitHub Actions Alerting** | `RequestError [HttpError]: Issues has been disabled in this repository - status: 410` on failure step | GitHub disables Issues by default on forked repositories (`GoogleCloudPlatform/gcc-creative-studio` forks). | Run `gh repo edit <owner>/<repo> --enable-issues` once on the fork, and wrap `github.rest.issues.create` in a `try/catch` that always writes to `core.summary`. |
