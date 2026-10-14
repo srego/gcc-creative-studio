@@ -31,7 +31,7 @@ To minimize merge conflicts during upstream updates, all custom features MUST re
 - **Core Integration Constraint:** Never modify core business logic, authentication guards, gallery services, or shared components outside of `/custom/`. Core repository modifications are strictly restricted to **3 minimal integration hooks**:
   1. `backend/main.py` (Router registration)
   2. `frontend/src/app/app-routing.module.ts` (Route entry for standalone component)
-  3. `frontend/src/app/header/header.component.html` (Navigation icon)
+  3. `frontend/src/app/header/header.component.html` & `header.component.ts` (Custom Tools `person` icon with Obsidian + Violet ring & flyout menu)
 
 ### Empirical Field-Test Benchmark: Pre-Mod-Guide vs. Mod Guide Architecture
 During the October 2026 upstream synchronization (`169c42e..ad93919`, a major 230+ file upstream release introducing `agents`, `projects`, `folders`, `storyboard`, `infrastructure/`, and native `google-adk`), we benchmarked two live customer/demo instances side-by-side:
@@ -69,7 +69,8 @@ gcc-creative-studio/
         └── app/
             ├── app-routing.module.ts            # Core Hook 2: /custom/adk-assistant route
             ├── header/
-            │   └── header.component.html        # Core Hook 3: auto_awesome nav button
+            │   ├── header.component.html        # Core Hook 3a: Custom Tools (person icon + flyout menu)
+            │   └── header.component.ts          # Core Hook 3b: customToolsMenuHovered flyout state
             └── custom/
                 └── adk_assistant/
                     ├── adk-assistant.service.ts # HTTP client service
@@ -133,35 +134,106 @@ const routes: Routes = [
 ];
 ```
 
-**3. Hook 3: Navigation Header Link (`frontend/src/app/header/header.component.html`)**
+**3. Hook 3: Custom Tools Navigation (`person` Icon + Flyout Menu in `header.component.html` & `header.component.ts`)**
 
 > **Important:**
-> 1. **Placement:** Custom user navigation icons MUST be anchored inside the main navigation cluster immediately preceding `<!-- 5th: Media Gallery -->` (`<div routerLink="/gallery"...`).
-> 2. **Responsive Sizing:** Use upstream's responsive classes `md:w-14 md:h-14 w-10 h-10` on the outer pill and `left-[9px] top-[9px] md:left-[16px] md:top-[16px]` on the icon wrapper (replacing the legacy fixed `w-14 h-14` and `md:mb-[10px]`).
-> 3. **Direct Button vs. Flyout Menu:** Using a direct `routerLink` button (shown below) requires **zero edits** to `header.component.ts`. If you instead build a hover flyout menu, attach `(mouseenter)` and `(mouseleave)` **only** to the outer `relative flex` wrapper—never duplicate them on the inner flyout panel.
+> 1. **Placement:** Custom user navigation MUST be anchored inside the main navigation cluster immediately preceding `<!-- 5th: Media Gallery -->` (`<div routerLink="/gallery"...`).
+> 2. **Dedicated `person` Icon & Obsidian + Violet Visual Treatment:** Use the `<mat-icon>person</mat-icon>` icon on the sidebar rail with an Obsidian + Indigo Ring resting state (`bg-zinc-900/80 shadow-[0_0_10px_rgba(129,140,248,0.45)] outline outline-2 outline-offset-[-1px] outline-indigo-400` and `text-indigo-200`). This ensures users can immediately identify where custom extensions live even when inactive, avoids duplicating upstream's `auto_awesome` (sparkle) icon on the rail, and allows multiple `/custom/*` tools to live inside a single flyout drawer.
+> 3. **Responsive Sizing & Hover Ownership:** Use upstream's responsive classes `md:w-14 md:h-14 w-10 h-10` on the outer pill and `left-[9px] top-[9px] md:left-[16px] md:top-[16px]` on the icon wrapper. Attach `(mouseenter)="onCustomToolsEnter()"` and `(mouseleave)="onCustomToolsLeave()"` **only** to the outer `relative flex` wrapper—never duplicate them on the inner flyout panel.
 
 ```html
 <!-- frontend/src/app/header/header.component.html (placed immediately preceding <!-- 5th: Media Gallery -->) -->
-<div
-  routerLink="/custom/adk-assistant"
-  matTooltip="ADK Assistant"
-  matTooltipPosition="right"
-  class="cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
->
-  <div
-    *ngIf="router.isActive('/custom/adk-assistant', true)"
-    class="flex-1 h-14 bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 rounded-full blur-[3px] backdrop-blur-md"
-  ></div>
-  <div class="w-6 h-6 left-[9px] top-[9px] md:left-[16px] md:top-[16px] absolute overflow-hidden">
-    <button
-      matFab
-      aria-label="ADK Assistant"
-      class="cursor-pointer w-6 h-6 left-0 top-0 absolute text-center justify-center text-neutral-200 text-2xl"
+    <!-- Custom Tools Dropdown (ADK Assistant) -->
+    <div
+      class="relative flex"
+      (mouseenter)="onCustomToolsEnter()"
+      (mouseleave)="onCustomToolsLeave()"
     >
-      <mat-icon>auto_awesome</mat-icon>
-    </button>
-  </div>
-</div>
+      <div
+        [class.bg-indigo-950]="customToolsMenuHovered"
+        class="cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-zinc-900/80 rounded-[48px] shadow-[0_0_10px_rgba(129,140,248,0.45)] outline outline-2 outline-offset-[-1px] outline-indigo-400 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden transition-colors duration-200"
+      >
+        <div
+          *ngIf="router.isActive('/custom', false)"
+          class="flex-1 h-14 bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 rounded-full blur-[3px] backdrop-blur-md"
+        ></div>
+        <div class="w-6 h-6 left-[9px] top-[9px] md:left-[16px] md:top-[16px] absolute overflow-hidden">
+          <button
+            matFab
+            aria-label="Custom Tools"
+            class="cursor-pointer w-6 h-6 left-0 top-0 absolute text-center justify-center text-indigo-200 text-2xl"
+          >
+            <mat-icon>person</mat-icon>
+          </button>
+        </div>
+      </div>
+
+      <!-- Hover is owned by the wrapper above (see the Media flyout note). -->
+      <div
+        *ngIf="customToolsMenuHovered"
+        class="absolute left-[70px] top-0 p-3 flex flex-col gap-3 bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-[24px] shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px] z-[1001] min-w-[220px]"
+        [@fadeSlideInOut]
+      >
+        <div class="absolute -left-[20px] top-0 bottom-0 w-[20px] bg-transparent"></div>
+
+        <div
+          routerLink="/custom/adk-assistant"
+          class="cursor-pointer w-full h-12 bg-blend-soft-light bg-white/40 rounded-xl shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl relative overflow-hidden flex items-center group hover:bg-white/50 transition-all"
+        >
+          <div
+            *ngIf="router.isActive('/custom/adk-assistant', true)"
+            class="absolute inset-0 bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 opacity-80 blur-[3px] backdrop-blur-md"
+          ></div>
+
+          <div class="relative flex items-center px-4 w-full z-10">
+            <mat-icon class="text-neutral-200 mr-3">auto_awesome</mat-icon>
+            <span class="text-neutral-200 font-medium text-sm whitespace-nowrap">ADK Assistant</span>
+          </div>
+        </div>
+      </div>
+    </div>
+```
+
+```typescript
+// frontend/src/app/header/header.component.ts (add customToolsMenuHovered state & hover handlers)
+export class HeaderComponent implements OnDestroy {
+  // ... existing properties ...
+  toolsMenuHovered = false;
+  generationMenuHovered = false;
+  customToolsMenuHovered = false;
+  private static readonly MENU_CLOSE_DELAY_MS = 200;
+  private menuTimeout: ReturnType<typeof setTimeout> | null = null;
+  private genMenuTimeout: ReturnType<typeof setTimeout> | null = null;
+  private customMenuTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  ngOnDestroy(): void {
+    this.clearGenMenuTimeout();
+    this.clearToolsMenuTimeout();
+    this.clearCustomMenuTimeout();
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
+  private clearCustomMenuTimeout(): void {
+    if (this.customMenuTimeout !== null) {
+      clearTimeout(this.customMenuTimeout);
+      this.customMenuTimeout = null;
+    }
+  }
+
+  onCustomToolsEnter() {
+    this.clearCustomMenuTimeout();
+    this.customToolsMenuHovered = true;
+  }
+
+  onCustomToolsLeave() {
+    this.clearCustomMenuTimeout();
+    this.customMenuTimeout = setTimeout(() => {
+      this.customMenuTimeout = null;
+      this.customToolsMenuHovered = false;
+    }, HeaderComponent.MENU_CLOSE_DELAY_MS);
+  }
+}
 ```
 
 ### Stage 2.2: Backend ADK Integration & FastAPI Router

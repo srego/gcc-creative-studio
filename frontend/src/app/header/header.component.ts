@@ -56,10 +56,12 @@ export class HeaderComponent implements OnDestroy {
   private readonly destroy$ = new Subject<void>();
   toolsMenuHovered = false;
   generationMenuHovered = false;
+  customToolsMenuHovered = false;
   /** Grace period before a flyout closes, so the pointer can cross to it. */
   private static readonly MENU_CLOSE_DELAY_MS = 200;
   private menuTimeout: ReturnType<typeof setTimeout> | null = null;
   private genMenuTimeout: ReturnType<typeof setTimeout> | null = null;
+  private customMenuTimeout: ReturnType<typeof setTimeout> | null = null;
   isBrowser: boolean;
   isGalleryActive = false;
 
@@ -103,6 +105,7 @@ export class HeaderComponent implements OnDestroy {
   ngOnDestroy(): void {
     this.clearGenMenuTimeout();
     this.clearToolsMenuTimeout();
+    this.clearCustomMenuTimeout();
     this.destroy$.next();
     this.destroy$.complete();
   }
@@ -170,6 +173,26 @@ export class HeaderComponent implements OnDestroy {
       clearTimeout(this.menuTimeout);
       this.menuTimeout = null;
     }
+  }
+
+  private clearCustomMenuTimeout(): void {
+    if (this.customMenuTimeout !== null) {
+      clearTimeout(this.customMenuTimeout);
+      this.customMenuTimeout = null;
+    }
+  }
+
+  onCustomToolsEnter() {
+    this.clearCustomMenuTimeout();
+    this.customToolsMenuHovered = true;
+  }
+
+  onCustomToolsLeave() {
+    this.clearCustomMenuTimeout();
+    this.customMenuTimeout = setTimeout(() => {
+      this.customMenuTimeout = null;
+      this.customToolsMenuHovered = false;
+    }, HeaderComponent.MENU_CLOSE_DELAY_MS);
   }
 
   private checkIsGalleryActive(): boolean {
