@@ -28,7 +28,7 @@ if not os.environ.get("GOOGLE_API_KEY") and not os.environ.get(
     )
 
 AGENT_NAME = "creative_studio_assistant"
-AGENT_MODEL = "gemini-3.7-flash"
+AGENT_MODEL = os.environ.get("CUSTOM_FLASH_MODEL", "gemini-flash-latest")
 AGENT_INSTRUCTION = (
     "You are the Google Cloud Creative Studio AI Assistant. Assist users "
     "with prompt engineering for Imagen and Veo, brand guideline adherence, "

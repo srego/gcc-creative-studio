@@ -51,7 +51,7 @@ class TestAdkAssistantSuite(unittest.TestCase):
         """Asserts root_agent metadata, model configuration, and prompt instructions."""
         self.assertEqual(root_agent.name, "creative_studio_assistant")
         self.assertEqual(root_agent.name, AGENT_NAME)
-        self.assertEqual(root_agent.model, "gemini-3.7-flash")
+        self.assertEqual(root_agent.model, "gemini-flash-latest")
         self.assertEqual(root_agent.model, AGENT_MODEL)
         self.assertIn(
             "Google Cloud Creative Studio AI Assistant",
@@ -69,7 +69,7 @@ class TestAdkAssistantSuite(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["status"], "healthy")
         self.assertEqual(data["agentName"], "creative_studio_assistant")
-        self.assertEqual(data["model"], "gemini-3.7-flash")
+        self.assertEqual(data["model"], "gemini-flash-latest")
         self.assertEqual(data["service"], "adk-assistant")
         self.assertEqual(data["version"], "0.1.0")
 
@@ -115,7 +115,7 @@ class TestAdkAssistantSuite(unittest.TestCase):
             self.assertEqual(data["sessionId"], "test-session-suite-001")
             self.assertEqual(data["agentName"], "creative_studio_assistant")
             self.assertIn("agent_name", data["metadata"])
-            self.assertEqual(data["metadata"]["model"], "gemini-3.7-flash")
+            self.assertEqual(data["metadata"]["model"], "gemini-flash-latest")
 
             # Validate response schema
             query_obj = QueryResponse.model_validate(data)
