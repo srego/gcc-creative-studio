@@ -32,7 +32,7 @@ import {WorkflowListComponent} from './workflows/workflow-list/workflow-list.com
 import {WorkbenchComponent} from './workbench/workbench.component';
 import {UpscaleComponent} from './upscale/upscale.component';
 import {ProjectsComponent} from './projects/projects.component';
-import {SubtitlesComponent} from './custom/subtitles/subtitles.component';
+import {CUSTOM_ROUTES} from './custom/custom-tools.registry';
 import {UserRolesEnum} from './common/models/user.model';
 
 const routes: Routes = [
@@ -51,11 +51,7 @@ const routes: Routes = [
   {path: 'video', component: VideoComponent, canActivate: [AuthGuardService]},
   {path: 'vto', component: VtoComponent, canActivate: [AuthGuardService]},
   {path: 'audio', component: AudioComponent, canActivate: [AuthGuardService]},
-  {
-    path: 'custom/subtitles',
-    component: SubtitlesComponent,
-    canActivate: [AuthGuardService],
-  },
+  ...CUSTOM_ROUTES,
   {
     path: 'workbench',
     component: WorkbenchComponent,

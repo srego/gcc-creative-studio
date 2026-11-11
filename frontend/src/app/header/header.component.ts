@@ -24,6 +24,7 @@ import {BreakpointObserver, Breakpoints} from '@angular/cdk/layout';
 import {Subject} from 'rxjs';
 import {filter, takeUntil} from 'rxjs/operators';
 import {isPlatformBrowser} from '@angular/common';
+import {CUSTOM_TOOLS, CustomToolEntry} from '../custom/custom-tools.registry';
 
 @Component({
   selector: 'app-header',
@@ -57,6 +58,7 @@ export class HeaderComponent implements OnDestroy {
   toolsMenuHovered = false;
   generationMenuHovered = false;
   customToolsMenuHovered = false;
+  readonly customTools: CustomToolEntry[] = CUSTOM_TOOLS;
   /** Grace period before a flyout closes, so the pointer can cross to it. */
   private static readonly MENU_CLOSE_DELAY_MS = 200;
   private menuTimeout: ReturnType<typeof setTimeout> | null = null;

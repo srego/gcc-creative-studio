@@ -45,6 +45,10 @@ class SubtitleRequestDTO(BaseModel):
         default=None,
         description="Custom package / folder name to organize outputs in output_subtitles/.",
     )
+    style_preset: Optional[str] = Field(
+        default="minimal",
+        description="Subtitle visual style preset: minimal, tiktok, box, or neon.",
+    )
 
 
 class SubtitleResponseDTO(BaseModel):
@@ -117,6 +121,10 @@ class SubtitleResponseDTO(BaseModel):
     language_code: Optional[str] = Field(
         default="en-US",
         description="Language code used for transcription.",
+    )
+    style_preset: Optional[str] = Field(
+        default="minimal",
+        description="Subtitle visual style preset applied during rendering.",
     )
 
 

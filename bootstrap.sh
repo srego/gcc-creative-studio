@@ -393,8 +393,8 @@ setup_repo() {
         
         cd "$REPO_CLONE_DIR"
         
-        # 2. Sparse checkout for ROOT folders only
-        git sparse-checkout set "infrastructure" "backend" "frontend" "bootstrap.sh"
+        # 2. Sparse checkout for ROOT folders only (including docs and GEMINI.md for AI-assisted customization)
+        git sparse-checkout set "infrastructure" "backend" "frontend" "docs" "GEMINI.md" "bootstrap.sh"
         
         git checkout
         cd ..
@@ -442,6 +442,65 @@ setup_repo() {
     info "Detected repository host: $REPO_HOST"
     info "Detected repository owner: $REPO_OWNER"
     info "Detected repository name: $REPO_NAME"
+}
+
+configure_custom_modules() {
+    step "4b" "Configuring Custom Modules Shell (/custom)"
+    local CUSTOM_BE_DIR="$REPO_ROOT/backend/src/custom"
+    local CUSTOM_REGISTRY="$REPO_ROOT/frontend/src/app/custom/custom-tools.registry.ts"
+
+    if [ ! -d "$CUSTOM_BE_DIR" ]; then
+        info "No /custom directory detected in repository. Proceeding with vanilla Creative Studio."
+        return 0
+    fi
+
+    local AVAILABLE_MODULES=()
+    for d in "$CUSTOM_BE_DIR"/*/; do
+        [ -d "$d" ] || continue
+        local mod_name
+        mod_name=$(basename "$d")
+        [[ "$mod_name" == _* ]] && continue
+        AVAILABLE_MODULES+=("$mod_name")
+    done
+
+    info "Detected Custom Module Shell with ${#AVAILABLE_MODULES[@]} module(s): ${C_YELLOW}${AVAILABLE_MODULES[*]:-none}${C_RESET}"
+
+    if [ -z "${CUSTOM_MODULES_MODE:-}" ]; then
+        if [ -n "$CLI_PROFILE" ] || [ "$TF_AUTO_APPROVE" = "true" ]; then
+            CUSTOM_MODULES_MODE="default"
+        else
+            echo "  [1] Default — Enable Custom Shell with pre-packaged modules (${AVAILABLE_MODULES[*]:-subtitles}) (Recommended)"
+            echo "  [2] Empty Shell Only — Keep /custom shell ready for AI coding, but hide default sample tools"
+            prompt "How would you like to configure the Custom Tools section? [Default: 1]"
+            read -p "   Select [1/2]: " CUSTOM_CHOICE < /dev/tty || true
+            case "${CUSTOM_CHOICE:-1}" in
+                2) CUSTOM_MODULES_MODE="empty" ;;
+                *) CUSTOM_MODULES_MODE="default" ;;
+            esac
+        fi
+        write_state "CUSTOM_MODULES_MODE" "$CUSTOM_MODULES_MODE"
+    fi
+
+    if [ "$CUSTOM_MODULES_MODE" = "empty" ] && [ -f "$CUSTOM_REGISTRY" ]; then
+        info "Configuring empty Custom Tools shell (clearing default sample entries in custom-tools.registry.ts)..."
+        cat << 'EOF_REG' > "$CUSTOM_REGISTRY"
+import {Routes} from '@angular/router';
+
+export interface CustomToolEntry {
+  slug: string;
+  label: string;
+  icon: string;
+  route: string;
+  description?: string;
+}
+
+export const CUSTOM_TOOLS: CustomToolEntry[] = [];
+export const CUSTOM_ROUTES: Routes = [];
+EOF_REG
+        success "Custom Tools shell initialized in empty mode (add tools later via custom-tools.registry.ts)."
+    else
+        success "Custom Tools shell active with modules: ${AVAILABLE_MODULES[*]:-none}"
+    fi
 }
 
 configure_environment() {
@@ -617,7 +676,7 @@ EOF
 
 handle_manual_steps() {
     step 6 "Manual Steps Required"; cd "$REPO_ROOT/infrastructure"; TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
-    info "Enabling required Google Cloud APIs..."; gcloud services enable cloudbuild.googleapis.com secretmanager.googleapis.com firebase.googleapis.com iap.googleapis.com identitytoolkit.googleapis.com texttospeech.googleapis.com workflows.googleapis.com sqladmin.googleapis.com --project="$GCP_PROJECT_ID"
+    info "Enabling required Google Cloud APIs..."; gcloud services enable cloudbuild.googleapis.com secretmanager.googleapis.com firebase.googleapis.com iap.googleapis.com identitytoolkit.googleapis.com texttospeech.googleapis.com speech.googleapis.com workflows.googleapis.com sqladmin.googleapis.com --project="$GCP_PROJECT_ID"
     if [ -z "$REPO_CONN_NAME" ]; then
         local PROVIDER_NAME="GitHub"
         if [[ "$REPO_HOST" == *"gitlab"* ]]; then PROVIDER_NAME="GitLab"; fi
@@ -1116,6 +1175,23 @@ update_oauth_client() {
     success "OAuth Client URIs configured automatically."
 }
 
+# Prints a Fernet key (32 random bytes, URL-safe base64: 44 chars ending in "=").
+# Tries openssl, then python3, then /dev/urandom + base64, so hosts without openssl
+# still work. Prints nothing if every source fails or yields a malformed key.
+generate_fernet_key() {
+    local key=""
+    if command -v openssl >/dev/null 2>&1; then
+        key=$(openssl rand -base64 32 2>/dev/null | tr '+/' '-_') || key=""
+    fi
+    if [ -z "$key" ] && command -v python3 >/dev/null 2>&1; then
+        key=$(python3 -c "import base64,secrets;print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())" 2>/dev/null) || key=""
+    fi
+    if [ -z "$key" ] && [ -r /dev/urandom ] && command -v base64 >/dev/null 2>&1; then
+        key=$(head -c 32 /dev/urandom | base64 | tr -d '\n' | tr '+/' '-_') || key=""
+    fi
+    if [[ "$key" =~ ^[A-Za-z0-9_-]{43}=$ ]]; then echo "$key"; fi
+}
+
 update_secrets() {
     step 12 "Updating Remaining Secrets"; info "Navigating to $REPO_ROOT/infrastructure..."; cd "$REPO_ROOT/infrastructure"
     info "Populating values in Secret Manager..."; local TERRAFORM_OUTPUTS=$(terraform output -json 2>/dev/null || echo "{}")
@@ -1172,6 +1248,20 @@ update_secrets() {
                 fi
                 SECRET_VALUE=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
                 AUTO_DISCOVERED=true 
+                ;;
+            "workflow_token_encryption_key")
+                CURRENT_SECRET_VALUE=$(gcloud secrets versions access latest --secret="$SECRET_NAME" --project="$GCP_PROJECT_ID" 2>/dev/null || echo "")
+                if [ -n "$CURRENT_SECRET_VALUE" ] && [ "$CURRENT_SECRET_VALUE" != "placeholder_value_waiting_for_bootstrap_sh" ]; then
+                    info "  Existing encryption key found in Secret Manager. Preserving current key without rotating."
+                    continue
+                fi
+                SECRET_VALUE=$(generate_fernet_key)
+                if [ -z "$SECRET_VALUE" ]; then
+                    warn "  Could not auto-generate a Fernet key (no openssl, python3 or /dev/urandom + base64 available)."
+                    info "  Paste a 44-char URL-safe base64 key (32 random bytes), generated on any machine with e.g.:"
+                    info "  python3 -c \"import base64,secrets;print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())\""
+                fi
+                AUTO_DISCOVERED=true
                 ;;
             "agent_engine_resource_name") 
                 info "  Value will be populated automatically during Agent Engine deployment. Skipping."
@@ -1851,7 +1941,7 @@ main() {
         "check_prerequisites"
         "select_deployment_profile"
         "check_and_install_terraform"
-        "setup_project" "setup_repo"
+        "setup_project" "setup_repo" "configure_custom_modules"
         "configure_environment"
         "handle_manual_steps"
         "setup_firebase_app"

@@ -51,6 +51,7 @@ export interface SubtitleGenerationParams {
   languageCode?: string;
   outputFormat?: string;
   burnSubtitles?: boolean;
+  stylePreset?: string;
 }
 
 export interface SaveToGalleryResponse {
@@ -114,6 +115,7 @@ export class SubtitlesService {
                   language_code: params.languageCode || 'en-US',
                   output_format: params.outputFormat || 'vtt',
                   burn_subtitles: !!params.burnSubtitles,
+                  style_preset: params.stylePreset || 'minimal',
                 },
               );
             }),
@@ -132,6 +134,9 @@ export class SubtitlesService {
           if (params.outputFormat) {
             formData.append('output_format', params.outputFormat);
           }
+          if (params.stylePreset) {
+            formData.append('style_preset', params.stylePreset);
+          }
           formData.append('burn_subtitles', String(!!params.burnSubtitles));
 
           return this.http.post<SubtitleResponse>(
@@ -149,6 +154,7 @@ export class SubtitlesService {
       language_code: params.languageCode || 'en-US',
       output_format: params.outputFormat || 'vtt',
       burn_subtitles: !!params.burnSubtitles,
+      style_preset: params.stylePreset || 'minimal',
     });
   }
 

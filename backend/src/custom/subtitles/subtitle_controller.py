@@ -129,6 +129,7 @@ async def generate_subtitles(
     req_lang = "en-US"
     req_format = "vtt"
     req_burn = False
+    req_style = "minimal"
     pkg_name = None
 
     content_type = request.headers.get("content-type", "")
@@ -140,6 +141,7 @@ async def generate_subtitles(
             req_lang = request_dto.language_code
             req_format = request_dto.output_format
             req_burn = request_dto.burn_subtitles
+            req_style = request_dto.style_preset or "minimal"
             pkg_name = request_dto.package_name
             video_source = request_dto.video_url or request_dto.video_uri
             job_dir = subtitle_service.resolve_output_dir(
@@ -218,6 +220,7 @@ async def generate_subtitles(
 
         req_lang = str(form.get("language_code", "en-US"))
         req_format = str(form.get("output_format", "vtt"))
+        req_style = str(form.get("style_preset", "minimal"))
         burn_val = form.get("burn_subtitles")
         if burn_val is not None:
             req_burn = str(burn_val).lower() in ["true", "1", "yes"]
@@ -242,6 +245,7 @@ async def generate_subtitles(
             language_code=req_lang,
             package_name=pkg_name,
             job_dir=job_dir,
+            style_preset=req_style,
         )
 
         if res_dto.status == "failed":
@@ -261,6 +265,7 @@ async def generate_subtitles(
         language_code=req_lang,
         package_name=pkg_name,
         job_dir=job_dir,
+        style_preset=req_style,
     )
 
     return SubtitleResponseDTO(

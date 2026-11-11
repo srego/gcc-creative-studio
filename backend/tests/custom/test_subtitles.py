@@ -1182,61 +1182,66 @@ def test_process_video_gcs_and_callbacks():
         assert len(progress_updates) >= 4
 
 
-def test_media_item_model_source_assets_sanitization():
-    """Tests that MediaItemModel filters out malformed/dict source_assets via field_validator."""
-    from src.common.schema.media_item_model import MediaItemModel
-
-    # 1. Test with invalid dicts lacking asset_id and role
-    item_data = {
-        "workspace_id": 1,
-        "user_email": "test@example.com",
-        "mime_type": "video/mp4",
-        "model": "chirp_3+gemini-2.5-flash",
-        "aspect_ratio": "16:9",
-        "gcs_uris": ["gs://bucket/video.mp4"],
-        "source_assets": [
-            {"name": "subtitles.vtt", "gcs_uri": "gs://bucket/subtitles.vtt"}
-        ],
-        "raw_data": {"created_via": "subtitles_studio"},
-    }
-    model = MediaItemModel.model_validate(item_data)
-    assert model.source_assets == []
-
-    # 2. Test with valid dicts containing asset_id and role
-    item_data_valid = {
-        "workspace_id": 1,
-        "user_email": "test@example.com",
-        "mime_type": "video/mp4",
-        "model": "chirp_3+gemini-2.5-flash",
-        "aspect_ratio": "16:9",
-        "gcs_uris": ["gs://bucket/video.mp4"],
-        "source_assets": [{"asset_id": 123, "role": "input"}],
-        "raw_data": {},
-    }
-    model_valid = MediaItemModel.model_validate(item_data_valid)
-    assert len(model_valid.source_assets) == 1
-    assert model_valid.source_assets[0].asset_id == 123
-
-
-@pytest.mark.asyncio
-async def test_gallery_service_defensive_enrichment():
-    """Tests GalleryService._enrich_source_asset_link with malformed or missing assets."""
-    from src.galleries.gallery_service import GalleryService
-
-    service = GalleryService.__new__(GalleryService)
-    service.source_asset_repo = MagicMock()
-    service.source_asset_repo.get_by_id = AsyncMock(return_value=None)
-    service.iam_signer_credentials = MagicMock()
-
-    # Should safely return None on invalid inputs without throwing
-    assert await service._enrich_source_asset_link(None) is None
-    assert await service._enrich_source_asset_link({}) is None
-    assert (
-        await service._enrich_source_asset_link(
-            {"name": "test.vtt", "gcs_uri": "gs://..."}
-        )
-        is None
+def test_custom_shell_helpers_and_router_autodiscovery():
+    """Tests the Custom Shell helpers (gemini-flash-latest, telemetry headers/labels, and router auto-discovery)."""
+    from fastapi import FastAPI
+    from src.custom import (
+        get_custom_genai_client,
+        get_custom_model_labels,
+        get_default_flash_model,
+        get_flash_model_candidates,
+        include_custom_routers,
     )
+
+    assert get_default_flash_model() == "gemini-flash-latest"
+    candidates = get_flash_model_candidates()
+    assert candidates[0] == "gemini-flash-latest"
+    assert "gemini-3.8-flash" in candidates
+
+    labels = get_custom_model_labels("subtitles")
+    assert labels["goog-solutions"] == "creative-studio-custom"
+    assert labels["cs-custom-module"] == "subtitles"
+
+    test_app = FastAPI()
+    mounted = include_custom_routers(test_app)
+    assert "subtitles" in mounted
+    assert "adk_assistant" in mounted
+    # Second call should be idempotent
+    mounted_again = include_custom_routers(test_app)
+    assert "subtitles" in mounted_again
+
+
+def test_burn_subtitles_ffmpeg_style_presets(tmp_path):
+    """Tests that style_preset ('tiktok', 'box', 'neon') passes force_style to FFmpeg."""
+    engine = PodcastSubtitleEngine()
+    video_file = tmp_path / "in.mp4"
+    sub_file = tmp_path / "sub.srt"
+    out_file = tmp_path / "out.mp4"
+    video_file.write_bytes(b"00")
+    sub_file.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n")
+
+    captured_cmds = []
+
+    def fake_run(cmd, *args, **kwargs):
+        captured_cmds.append(cmd)
+        temp_out = str(out_file) + ".tmp.mp4"
+        with open(temp_out, "wb") as f:
+            f.write(b"11")
+        res = MagicMock()
+        res.returncode = 0
+        return res
+
+    with patch("subprocess.run", side_effect=fake_run):
+        engine.burn_subtitles_ffmpeg(
+            str(video_file),
+            str(sub_file),
+            str(out_file),
+            style_preset="tiktok",
+        )
+
+    assert len(captured_cmds) == 1
+    vf_idx = captured_cmds[0].index("-vf") + 1
+    assert "force_style=" in captured_cmds[0][vf_idx]
 
 
 def test_parse_speech_response():

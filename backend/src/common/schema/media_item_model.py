@@ -14,9 +14,9 @@
 
 import datetime
 from enum import Enum
-from typing import Annotated, Any
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 from sqlalchemy import (
     Boolean,
@@ -82,7 +82,9 @@ class AssetRoleEnum(str, Enum):
         "image_reference_asset"  # An input for R2V with asset type
     )
     VIDEO_REFERENCE = "video_reference"  # Video used as omni input reference
-    AUDIO_REFERENCE = "audio_reference"  # Audio used as omni input reference
+    # Legacy: kept to read historical records; rejected for new video
+    # generation requests.
+    AUDIO_REFERENCE = "audio_reference"
     YOUTUBE_VIDEO_REFERENCE = (
         "youtube_video_reference"  # YouTube video used as input reference
     )
@@ -122,7 +124,7 @@ class SourceMediaItemLink(BaseModel):
     media_item_id: int
     """The ID of the source MediaItemModel in the 'media_library' collection."""
 
-    media_index: int
+    media_index: int = Field(ge=0)
     """The index of the specific image within the parent's `gcs_uris` list."""
 
     role: AssetRoleEnum
@@ -298,29 +300,6 @@ class MediaItemModel(BaseDocument):
     to the source assets from the 'user_assets' collection and specifies the role
     each one played in the generation.
     """
-
-    @field_validator("source_assets", mode="before")
-    @classmethod
-    def filter_valid_source_assets(cls, v: Any) -> list[Any] | None:
-        if not v:
-            return []
-        if isinstance(v, list):
-            valid = []
-            for item in v:
-                if isinstance(item, dict):
-                    if (
-                        "asset_id" in item or "assetId" in item
-                    ) and "role" in item:
-                        valid.append(item)
-                elif (
-                    hasattr(item, "asset_id")
-                    and item.asset_id
-                    and hasattr(item, "role")
-                    and item.role
-                ):
-                    valid.append(item)
-            return valid
-        return v
 
     source_media_items: list[SourceMediaItemLink] | None = None
     """

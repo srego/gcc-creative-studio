@@ -39,8 +39,8 @@ export class AuthInterceptor implements HttpInterceptor {
       request.url.startsWith('/') ||
       (environment.backendURL.startsWith('http') &&
         request.url.startsWith(environment.backendURL));
-    // Skip Authorization header for Cloud Storage presigned URLs or external requests
-    if (request.url.includes('storage.googleapis.com') || !isBackendUrl) {
+    // Add validation for not intercepting the Google account url
+    if (!isBackendUrl) {
       return next.handle(request);
     }
 

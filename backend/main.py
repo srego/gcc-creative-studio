@@ -59,11 +59,9 @@ from src.workflows_executor.workflows_executor_controller import (
 )
 from src.workspaces.workspace_controller import router as workspace_router
 from src.agents.agent_controller import router as agent_router
+from src.custom import include_custom_routers
 from src.folders.folder_controller import router as folder_router
 from src.projects.project_controller import router as project_router
-from src.custom.subtitles.subtitle_controller import (
-    router as custom_subtitles_router,
-)
 
 
 def configure_cors(app):
@@ -126,7 +124,18 @@ async def lifespan(app: FastAPI):
 
     logger.info("Creating ThreadPoolExecutor...")
     # Create the pool and attach it to the app's state
-    app.state.executor = ThreadPoolExecutor(max_workers=4)
+    app.state.executor = ThreadPoolExecutor(max_workers=8)
+
+    # Register workflow session store + dispatcher hooks.
+    from src.auth.auth_guard import register_post_auth_hook
+    from src.workflows.queue.run_state_service import set_dispatch_hook
+    from src.workflows.queue.workflow_dispatcher import (
+        handle_post_auth_session,
+        run_default_dispatch,
+    )
+
+    register_post_auth_hook(handle_post_auth_session)
+    set_dispatch_hook(run_default_dispatch)
 
     yield
 
@@ -200,4 +209,4 @@ app.include_router(workbench_router)
 app.include_router(agent_router)
 app.include_router(project_router)
 app.include_router(folder_router)
-app.include_router(custom_subtitles_router)
+include_custom_routers(app)

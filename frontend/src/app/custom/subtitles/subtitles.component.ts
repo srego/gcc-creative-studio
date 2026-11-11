@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {isPlatformBrowser} from '@angular/common';
+import {CommonModule, isPlatformBrowser} from '@angular/common';
 import {HttpErrorResponse} from '@angular/common/http';
 import {
   Component,
@@ -30,8 +30,13 @@ import {
   ElementRef,
 } from '@angular/core';
 import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
-import {MatDialog} from '@angular/material/dialog';
-import {ActivatedRoute} from '@angular/router';
+import {FormsModule} from '@angular/forms';
+import {MatButtonModule} from '@angular/material/button';
+import {MatDialog, MatDialogModule} from '@angular/material/dialog';
+import {MatIconModule} from '@angular/material/icon';
+import {MatProgressSpinnerModule} from '@angular/material/progress-spinner';
+import {MatTooltipModule} from '@angular/material/tooltip';
+import {ActivatedRoute, RouterModule} from '@angular/router';
 import {Subscription, timer, of, throwError} from 'rxjs';
 import {switchMap, catchError} from 'rxjs/operators';
 import {ImageSelectorComponent} from '../../common/components/image-selector/image-selector.component';
@@ -51,6 +56,17 @@ export type SubtitleStep =
 
 @Component({
   selector: 'app-subtitles',
+  standalone: true,
+  imports: [
+    CommonModule,
+    FormsModule,
+    MatButtonModule,
+    MatDialogModule,
+    MatIconModule,
+    MatProgressSpinnerModule,
+    MatTooltipModule,
+    RouterModule,
+  ],
   templateUrl: './subtitles.component.html',
   styleUrls: ['./subtitles.component.scss'],
 })
@@ -509,6 +525,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
         languageCode: this.sourceLanguage(),
         outputFormat: 'vtt',
         burnSubtitles: this.enableBurnedInVideo(),
+        stylePreset: this.subtitleStylePreset(),
       })
       .subscribe({
         next: (initRes: SubtitleResponse) => {

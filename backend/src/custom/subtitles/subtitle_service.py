@@ -39,6 +39,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.common.base_dto import AspectRatioEnum, MimeTypeEnum
 from src.common.schema.media_item_model import JobStatusEnum, MediaItem
 from src.config.config_service import config_service
+from src.custom import (
+    get_custom_genai_client,
+    get_custom_model_labels,
+    get_default_flash_model,
+    get_flash_model_candidates,
+)
 from src.custom.subtitles.subtitle_dto import SubtitleResponseDTO
 from src.source_assets.schema.source_asset_model import (
     AssetScopeEnum,
@@ -61,13 +67,16 @@ class PodcastSubtitleEngine:
         self.project_id = (
             project_id
             or getattr(config_service, "PROJECT_ID", None)
+            or os.getenv("PROJECT_ID")
+            or os.getenv("GOOGLE_CLOUD_PROJECT")
             or "creative-studio-delta"
         )
         self.region = region
         self.gcs_bucket_name = (
             gcs_bucket_name
             or getattr(config_service, "GENMEDIA_BUCKET", None)
-            or "creative-studio-delta-cs-development-bucket"
+            or os.getenv("GENMEDIA_BUCKET")
+            or f"{self.project_id}-assets"
         )
 
         credentials = self._get_credentials()
@@ -98,12 +107,16 @@ class PodcastSubtitleEngine:
                 self.storage_client = None
 
         try:
-            self.genai_client = genai.Client(
-                vertexai=True, project=self.project_id, location="us-central1"
+            self.genai_client = get_custom_genai_client(
+                module_slug="subtitles",
+                project_id=self.project_id,
+                location="global",
             )
         except Exception:
             try:
-                self.genai_client = genai.Client()
+                self.genai_client = genai.Client(
+                    vertexai=True, project=self.project_id, location="global"
+                )
             except Exception as e:
                 logger.warning(f"Failed to initialize Gemini client: {e}")
                 self.genai_client = None
@@ -363,7 +376,7 @@ STRICT CONSTRAINTS:
 Word timing data:
 {json.dumps(chunk_words, separators=(',', ':'))}
 """
-        candidate_models = ["gemini-2.5-flash", "gemini-1.5-flash"]
+        candidate_models = get_flash_model_candidates()
         raw_response_text = ""
 
         if self.genai_client:
@@ -371,9 +384,15 @@ Word timing data:
                 for attempt in range(3):
                     try:
                         config_kwargs: Dict[str, Any] = {
-                            "response_mime_type": "application/json"
+                            "response_mime_type": "application/json",
+                            "labels": get_custom_model_labels("subtitles"),
                         }
-                        if "2.5" in model or "thinking" in model:
+                        if (
+                            "flash" in model
+                            or "2.5" in model
+                            or "3." in model
+                            or "thinking" in model
+                        ):
                             config_kwargs["thinking_config"] = types.ThinkingConfig(
                                 thinking_budget=0
                             )
@@ -419,25 +438,35 @@ Word timing data:
     def refine_gemini36(
         self, raw_transcript_data: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
-        """Refines raw transcript words using parallel chunked Gemini calls."""
+        """Refines raw transcript words using sentence-aligned chunked Gemini calls."""
         words_data = raw_transcript_data.get("words", [])
         if not words_data:
             return []
 
-        chunk_size = 75
-        if len(words_data) <= chunk_size:
+        target_chunk_size = 350
+        if len(words_data) <= target_chunk_size:
             segments = self._refine_chunk_gemini(words_data)
         else:
-            chunks = [
-                words_data[i : i + chunk_size]
-                for i in range(0, len(words_data), chunk_size)
-            ]
+            chunks: List[List[Dict[str, Any]]] = []
+            curr_chunk: List[Dict[str, Any]] = []
+            for item in words_data:
+                curr_chunk.append(item)
+                word_str = str(item.get("word", "")).strip()
+                if len(curr_chunk) >= target_chunk_size and (
+                    word_str.endswith((".", "?", "!"))
+                    or len(curr_chunk) >= target_chunk_size + 50
+                ):
+                    chunks.append(curr_chunk)
+                    curr_chunk = []
+            if curr_chunk:
+                chunks.append(curr_chunk)
+
             logger.info(
-                f"Refining {len(words_data)} words across {len(chunks)} chunks..."
+                f"Refining {len(words_data)} words across {len(chunks)} sentence-aligned chunks..."
             )
             segments = []
             with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(len(chunks), 2)
+                max_workers=min(len(chunks), 4)
             ) as executor:
                 results = list(executor.map(self._refine_chunk_gemini, chunks))
                 for chunk_segs in results:
@@ -599,8 +628,18 @@ Word timing data:
 
         return {"vtt": vtt_path, "srt": srt_path}
 
+    STYLE_PRESET_FORCE_STYLES: Dict[str, str] = {
+        "tiktok": "Fontname=DejaVu Sans,Fontsize=20,Bold=1,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=35",
+        "box": "Fontname=DejaVu Sans,Fontsize=16,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV=25",
+        "neon": "Fontname=DejaVu Sans,Fontsize=18,Bold=1,PrimaryColour=&H00FFFF00,OutlineColour=&H00FF00FF,BorderStyle=1,Outline=2,Shadow=2,Alignment=2,MarginV=30",
+    }
+
     def burn_subtitles_ffmpeg(
-        self, video_path: str, subtitle_path: str, output_video_path: str
+        self,
+        video_path: str,
+        subtitle_path: str,
+        output_video_path: str,
+        style_preset: str = "minimal",
     ) -> str:
         """Hardburn subtitles into MP4 using FFmpeg CLI."""
         if not os.path.exists(video_path):
@@ -615,7 +654,12 @@ Word timing data:
             .replace("[", "\\[")
             .replace("]", "\\]")
         )
-        filter_str = f"subtitles='{escaped_sub_path}'"
+        preset_key = (style_preset or "minimal").strip().lower()
+        force_style = self.STYLE_PRESET_FORCE_STYLES.get(preset_key)
+        if force_style:
+            filter_str = f"subtitles='{escaped_sub_path}':force_style='{force_style}'"
+        else:
+            filter_str = f"subtitles='{escaped_sub_path}'"
         temp_output_path = output_video_path + ".tmp.mp4"
 
         cmd = [
@@ -736,6 +780,7 @@ Word timing data:
         language_code: str = "en-US",
         progress_callback: Optional[Callable[[str, int], None]] = None,
         on_operation_started: Optional[Callable[[str], None]] = None,
+        style_preset: str = "minimal",
     ) -> Dict[str, Any]:
         """Runs complete subtitle extraction, refinement, and rendering pipeline."""
         if not job_dir:
@@ -789,6 +834,7 @@ Word timing data:
             job_dir=job_dir,
             generate_burned_in=generate_burned_in,
             progress_callback=progress_callback,
+            style_preset=style_preset,
         )
 
     def finalize_downstream(
@@ -798,6 +844,7 @@ Word timing data:
         job_dir: str,
         generate_burned_in: bool = True,
         progress_callback: Optional[Callable[[str, int], None]] = None,
+        style_preset: str = "minimal",
     ) -> Dict[str, Any]:
         """Runs Gemini refinement, formatting, subtitle export, and video packaging."""
         vtt_path = os.path.join(job_dir, "subtitles.vtt")
@@ -852,9 +899,17 @@ Word timing data:
             try:
                 # Prefer SRT for hardsubbing due to universal libass compatibility
                 burn_sub_source = srt_path if os.path.exists(srt_path) else vtt_path
-                self.burn_subtitles_ffmpeg(
-                    video_path, burn_sub_source, burned_in_video_path
-                )
+                if style_preset and style_preset != "minimal":
+                    self.burn_subtitles_ffmpeg(
+                        video_path,
+                        burn_sub_source,
+                        burned_in_video_path,
+                        style_preset=style_preset,
+                    )
+                else:
+                    self.burn_subtitles_ffmpeg(
+                        video_path, burn_sub_source, burned_in_video_path
+                    )
             except Exception as e:
                 logger.warning(
                     f"FFmpeg hardburning failed, falling back to toggleable video: {e}"
@@ -994,7 +1049,7 @@ class SubtitleService:
                 bucket_name = (
                     getattr(config_service, "GENMEDIA_BUCKET", None)
                     or os.getenv("GENMEDIA_BUCKET")
-                    or "creative-studio-delta-cs-development-bucket"
+                    or self.engine.gcs_bucket_name
                 )
                 bucket = self.engine.storage_client.bucket(bucket_name)
                 blob = bucket.blob(f"subtitles_jobs/{job_id}.json")
@@ -1120,6 +1175,7 @@ class SubtitleService:
                 job_dir=job_dir,
                 generate_burned_in=bool(job.burn_subtitles),
                 progress_callback=update_progress,
+                style_preset=getattr(job, "style_preset", None) or "minimal",
             )
 
             job.step = "packaging"
@@ -1774,8 +1830,12 @@ class SubtitleService:
         language_code: str = "en-US",
         package_name: Optional[str] = None,
         job_dir: Optional[str] = None,
+        style_preset: str = "minimal",
     ) -> SubtitleResponseDTO:
         """Process a subtitle job and update tracking state."""
+        with self._jobs_lock:
+            self._active_finishing_jobs.add(job_id)
+
         job = self._load_job_state(job_id)
         if not job:
             job = SubtitleResponseDTO(
@@ -1796,6 +1856,7 @@ class SubtitleService:
         job.progress = 10
         job.burn_subtitles = burn_subtitles
         job.language_code = language_code
+        job.style_preset = style_preset or "minimal"
         self._save_job_state(job_id, job)
 
         if not job_dir:
@@ -1815,14 +1876,17 @@ class SubtitleService:
             self._save_job_state(job_id, job)
 
         try:
-            result = self.engine.process_video(
-                video_path=video_path,
-                job_dir=job_dir,
-                generate_burned_in=burn_subtitles,
-                language_code=language_code,
-                progress_callback=update_progress,
-                on_operation_started=on_op_started,
-            )
+            process_kwargs: Dict[str, Any] = {
+                "video_path": video_path,
+                "job_dir": job_dir,
+                "generate_burned_in": burn_subtitles,
+                "language_code": language_code,
+                "progress_callback": update_progress,
+                "on_operation_started": on_op_started,
+            }
+            if style_preset and style_preset != "minimal":
+                process_kwargs["style_preset"] = style_preset
+            result = self.engine.process_video(**process_kwargs)
 
             job.step = "packaging"
             job.progress = 90
@@ -1884,6 +1948,9 @@ class SubtitleService:
             job.status = "failed"
             job.step = "failed"
             job.error_message = str(e)
+        finally:
+            with self._jobs_lock:
+                self._active_finishing_jobs.discard(job_id)
 
         self._save_job_state(job_id, job)
         return job
@@ -2292,13 +2359,15 @@ class SubtitleService:
                 pass
 
         # 6. Create and persist exactly ONE MediaItem in PostgreSQL
+        active_flash_model = get_default_flash_model()
+        gallery_model_tag = f"chirp_3+{active_flash_model}"
         try:
             media_item = MediaItem(
                 workspace_id=validated_workspace_id,
                 user_id=validated_user_id,
                 user_email=user_email or "developer@creative-studio.local",
                 mime_type=MimeTypeEnum.VIDEO_MP4.value,
-                model="chirp_3+gemini-2.5-flash",
+                model=gallery_model_tag,
                 prompt=f"Subtitles Studio: {package_name}",
                 original_prompt=package_name,
                 aspect_ratio=AspectRatioEnum.RATIO_16_9.value,
@@ -2313,6 +2382,7 @@ class SubtitleService:
                     "deliverables": saved_filenames,
                     "deliverable_items": attached_deliverables,
                     "created_via": "subtitles_studio",
+                    "custom_module": "subtitles",
                 },
             )
             db.add(media_item)
@@ -2329,7 +2399,7 @@ class SubtitleService:
                     user_id=None,
                     user_email=user_email or "developer@creative-studio.local",
                     mime_type=MimeTypeEnum.VIDEO_MP4.value,
-                    model="chirp_3+gemini-2.5-flash",
+                    model=gallery_model_tag,
                     prompt=f"Subtitles Studio: {package_name}",
                     original_prompt=package_name,
                     aspect_ratio=AspectRatioEnum.RATIO_16_9.value,
@@ -2344,6 +2414,7 @@ class SubtitleService:
                         "deliverables": saved_filenames,
                         "deliverable_items": attached_deliverables,
                         "created_via": "subtitles_studio",
+                        "custom_module": "subtitles",
                     },
                 )
                 db.add(media_item)
