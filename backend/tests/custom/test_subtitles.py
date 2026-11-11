@@ -1183,7 +1183,7 @@ def test_process_video_gcs_and_callbacks():
 
 
 def test_custom_shell_helpers_and_router_autodiscovery():
-    """Tests the Custom Shell helpers (gemini-flash-latest, telemetry headers/labels, and router auto-discovery)."""
+    """Tests the Custom Shell helpers (gemini-3.5-flash + fallback chain, telemetry headers/labels, and router auto-discovery)."""
     from fastapi import FastAPI
     from src.custom import (
         get_custom_genai_client,
@@ -1193,10 +1193,11 @@ def test_custom_shell_helpers_and_router_autodiscovery():
         include_custom_routers,
     )
 
-    assert get_default_flash_model() == "gemini-flash-latest"
+    assert get_default_flash_model() == "gemini-3.5-flash"
     candidates = get_flash_model_candidates()
-    assert candidates[0] == "gemini-flash-latest"
-    assert "gemini-3.8-flash" in candidates
+    assert candidates[0] == "gemini-3.5-flash"
+    assert "gemini-3.6-flash" in candidates
+    assert "gemini-4-argon" in candidates
 
     labels = get_custom_model_labels("subtitles")
     assert labels["goog-solutions"] == "creative-studio-custom"

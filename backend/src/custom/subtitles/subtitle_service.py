@@ -44,6 +44,7 @@ from src.custom import (
     get_custom_model_labels,
     get_default_flash_model,
     get_flash_model_candidates,
+    record_working_flash_model,
 )
 from src.custom.subtitles.subtitle_dto import SubtitleResponseDTO
 from src.source_assets.schema.source_asset_model import (
@@ -402,6 +403,7 @@ Word timing data:
                             config=types.GenerateContentConfig(**config_kwargs),
                         )
                         raw_response_text = res.text.strip()
+                        record_working_flash_model(model)
                         break
                     except Exception as e:
                         err_str = str(e).lower()

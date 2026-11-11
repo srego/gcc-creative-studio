@@ -49,6 +49,8 @@ steps:
       - '--image=${_GCP_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:$SHORT_SHA'
       - '--region'
       - '${_GCP_REGION}'
+      - '--cpu=2'
+      - '--memory=8Gi'
       - '--quiet' # Suppress interactive prompts for CI/CD environments
 
 # BEST PRACTICE: Explicitly declare the image(s) built by this pipeline.

@@ -21,7 +21,12 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from src.custom.adk_assistant.agent import AGENT_MODEL, AGENT_NAME, root_agent
+from src.custom.adk_assistant.agent import (
+    AGENT_MODEL,
+    AGENT_NAME,
+    get_active_agent_model,
+    root_agent,
+)
 from src.custom.adk_assistant.schemas import (
     HealthResponse,
     QueryRequest,
@@ -57,7 +62,7 @@ async def health_check() -> HealthResponse:
     return HealthResponse(
         status="healthy",
         agent_name=AGENT_NAME,
-        model=AGENT_MODEL,
+        model=get_active_agent_model(),
         service="adk-assistant",
         version="0.1.0",
     )
@@ -101,11 +106,6 @@ async def chat_with_assistant(request: QueryRequest) -> QueryResponse:
         )
 
         collected_texts: list[str] = []
-        metadata: dict[str, Any] = {
-            "agent_name": AGENT_NAME,
-            "model": AGENT_MODEL,
-        }
-
         # Asynchronously run the agent
         async for event in runner.run_async(
             user_id=DEFAULT_USER_ID,
@@ -116,6 +116,11 @@ async def chat_with_assistant(request: QueryRequest) -> QueryResponse:
                 for part in event.content.parts:
                     if part.text:
                         collected_texts.append(part.text)
+
+        metadata: dict[str, Any] = {
+            "agent_name": AGENT_NAME,
+            "model": get_active_agent_model(),
+        }
 
         response_content = (
             "".join(collected_texts)

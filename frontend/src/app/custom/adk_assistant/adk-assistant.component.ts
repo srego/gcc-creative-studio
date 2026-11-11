@@ -68,7 +68,7 @@ export class AdkAssistantComponent implements OnInit, AfterViewChecked {
   @ViewChild('promptInput') private promptInput?: ElementRef<HTMLTextAreaElement>;
 
   status: 'Online' | 'Connecting' | 'Offline' = 'Connecting';
-  modelName = 'gemini-flash-latest';
+  modelName = 'gemini-3.5-flash';
   serviceName = 'adk-assistant';
   sessionId = this.generateSessionId();
   prompt = '';

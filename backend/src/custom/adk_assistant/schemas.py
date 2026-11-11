@@ -97,6 +97,6 @@ class HealthResponse(BaseModel):
 
     status: str = "healthy"
     agent_name: str = "creative_studio_assistant"
-    model: str = "gemini-flash-latest"
+    model: str = "gemini-3.5-flash"
     service: str = "adk-assistant"
     version: str = "0.1.0"

@@ -19,8 +19,11 @@ Provides:
 2. Shared Vertex AI / GenAI client factory (`get_custom_genai_client(module_slug)`)
    aligned with upstream `GenAIModelSetup` (`location="global"`) and automatic
    `creative-studio/custom-<module_slug>` User-Agent telemetry attribution.
-3. Future-proof Flash model resolution (`get_default_flash_model()`,
-   `get_flash_model_candidates()`) defaulting to `gemini-flash-latest`.
+3. Resilient Vertex AI Gemini Flash model resolution (`get_default_flash_model()`,
+   `get_flash_model_candidates()`, `record_working_flash_model()`) defaulting to
+   `gemini-3.5-flash` (Google ADK's official `LlmAgent.DEFAULT_MODEL`, GA on
+   Vertex AI `global` with `ALLOW_ALL`) backed by an ordered automatic fallback
+   chain across live Vertex AI `global` publisher models.
 """
 
 import importlib
@@ -45,27 +48,42 @@ try:
 except importlib.metadata.PackageNotFoundError:
     VERSION = "0.1.0"
 
-DEFAULT_FLASH_MODEL = "gemini-flash-latest"
+DEFAULT_FLASH_MODEL = "gemini-3.5-flash"
 FALLBACK_FLASH_MODELS = (
-    "gemini-flash-latest",
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
+    "gemini-3.5-flash",
     "gemini-3.6-flash",
+    "gemini-3-flash-preview",
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-4-argon",
+    "gemini-2.5-pro",
 )
 
 _custom_clients: Dict[str, Client] = {}
 _clients_lock = threading.Lock()
+_resolved_working_model: str | None = None
 
 
 def get_default_flash_model() -> str:
-    """Returns the configured or default future-proof Gemini Flash model alias."""
-    return (
-        os.environ.get("CUSTOM_FLASH_MODEL", "").strip() or DEFAULT_FLASH_MODEL
-    )
+    """Returns the configured or last-verified working Vertex AI Gemini Flash model."""
+    env_override = os.environ.get("CUSTOM_FLASH_MODEL", "").strip()
+    if env_override:
+        return env_override
+    if _resolved_working_model:
+        return _resolved_working_model
+    return DEFAULT_FLASH_MODEL
+
+
+def record_working_flash_model(model_name: str) -> None:
+    """Caches the first verified working Vertex AI model in-process to avoid repeat 404 probes."""
+    global _resolved_working_model
+    cleaned = (model_name or "").strip()
+    if cleaned:
+        _resolved_working_model = cleaned
 
 
 def get_flash_model_candidates() -> List[str]:
-    """Returns an ordered, deduplicated list of Gemini Flash models to try."""
+    """Returns an ordered, deduplicated list of Vertex AI Gemini models to try."""
     primary = get_default_flash_model()
     candidates = [primary]
     for model in FALLBACK_FLASH_MODELS:
