@@ -126,6 +126,12 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   // Interactive Cue List & Soft Overlay Signals
   readonly softCcEnabled = signal<boolean>(true);
   readonly editableCues = signal<SubtitleCue[]>([]);
+  readonly baselineCueTexts = signal<string[]>([]);
+  readonly modifiedCueCount = signal<number>(0);
+  readonly sidecarRevision = signal<number>(1);
+  readonly burnedRevision = signal<number>(1);
+  readonly burnedNeedsReburn = signal<boolean>(false);
+  readonly lastSavedAt = signal<string | null>(null);
   readonly activeCueIndex = signal<number>(-1);
   readonly activeCueText = signal<string>('');
   readonly cuesDirty = signal<boolean>(false);
@@ -605,6 +611,12 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     this.showOriginalSourcePostRun.set(false);
     this.softCcEnabled.set(true);
     this.editableCues.set([]);
+    this.baselineCueTexts.set([]);
+    this.modifiedCueCount.set(0);
+    this.sidecarRevision.set(1);
+    this.burnedRevision.set(1);
+    this.burnedNeedsReburn.set(false);
+    this.lastSavedAt.set(null);
     this.activeCueIndex.set(-1);
     this.activeCueText.set('');
     this.cuesDirty.set(false);
@@ -782,15 +794,60 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     }
   }
 
+  private setInitialCues(cues: SubtitleCue[]): void {
+    const cloned = cues.map(c => ({...c}));
+    this.editableCues.set(cloned);
+    this.baselineCueTexts.set(cloned.map(c => c.text));
+    this.modifiedCueCount.set(0);
+    this.cuesDirty.set(false);
+  }
+
+  private recomputeDirtyState(): void {
+    const cues = this.editableCues();
+    const baseline = this.baselineCueTexts();
+    let diffCount = 0;
+    for (let i = 0; i < cues.length; i++) {
+      if ((cues[i]?.text ?? '') !== (baseline[i] ?? '')) {
+        diffCount++;
+      }
+    }
+    this.modifiedCueCount.set(diffCount);
+    this.cuesDirty.set(diffCount > 0);
+    if (diffCount > 0 && this.enableBurnedInVideo()) {
+      this.burnedNeedsReburn.set(true);
+    }
+  }
+
+  isCueModified(idx: number): boolean {
+    const cues = this.editableCues();
+    const baseline = this.baselineCueTexts();
+    if (idx < 0 || idx >= cues.length) return false;
+    return (cues[idx]?.text ?? '') !== (baseline[idx] ?? '');
+  }
+
+  revertCue(idx: number, textareaEl?: HTMLTextAreaElement): void {
+    const cues = this.editableCues();
+    const baseline = this.baselineCueTexts();
+    if (idx < 0 || idx >= cues.length || idx >= baseline.length) return;
+    cues[idx].text = baseline[idx];
+    if (textareaEl) {
+      textareaEl.value = baseline[idx];
+    }
+    if (this.activeCueIndex() === idx) {
+      this.activeCueText.set(baseline[idx]);
+    }
+    this.recomputeDirtyState();
+  }
+
   onCueTextChange(idx: number, newText: string): void {
     const list = this.editableCues();
     if (idx < 0 || idx >= list.length) return;
     list[idx].text = newText;
-    this.cuesDirty.set(true);
     this.cueSaveMessage.set(null);
     if (this.activeCueIndex() === idx) {
       this.activeCueText.set(newText);
     }
+    this.recomputeDirtyState();
   }
 
   saveCueEdits(reburnVideo = false): void {
@@ -811,25 +868,37 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
         next: (res: SubtitleResponse) => {
           this.isSavingCues.set(false);
           this.isReburningVideo.set(false);
-          this.cuesDirty.set(false);
-          if (res.cues && res.cues.length > 0) {
-            this.editableCues.set(res.cues.map(c => ({...c})));
-          }
-          if (
-            reburnVideo &&
-            res.burned_in_video &&
-            res.burned_in_video.startsWith('http')
-          ) {
-            this.burnedVideoPreviewUrl.set(res.burned_in_video);
-            setTimeout(() => {
-              this.burnedVideoPlayerRef?.nativeElement?.load();
-            }, 50);
+          const updatedList =
+            res.cues && res.cues.length > 0
+              ? res.cues.map(c => ({...c}))
+              : this.editableCues().map(c => ({...c}));
+          this.setInitialCues(updatedList);
+          this.sidecarRevision.update(v => v + 1);
+          const nowStr = new Date().toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          });
+          this.lastSavedAt.set(nowStr);
+
+          if (reburnVideo) {
+            this.burnedRevision.update(v => v + 1);
+            this.burnedNeedsReburn.set(false);
+            if (res.burned_in_video && res.burned_in_video.startsWith('http')) {
+              this.burnedVideoPreviewUrl.set(res.burned_in_video);
+              setTimeout(() => {
+                this.burnedVideoPlayerRef?.nativeElement?.load();
+              }, 50);
+            }
             this.cueSaveMessage.set(
-              'Saved caption edits and re-burned MP4 video!',
+              `Updated .VTT, .SRT & Burned-In MP4 (v${this.burnedRevision()} · ${nowStr})`,
             );
           } else {
+            if (this.enableBurnedInVideo()) {
+              this.burnedNeedsReburn.set(true);
+            }
             this.cueSaveMessage.set(
-              'Saved caption edits to .VTT and .SRT files!',
+              `Updated downloadable .VTT & .SRT files (v${this.sidecarRevision()} · ${nowStr})`,
             );
           }
         },
@@ -936,14 +1005,14 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     this.subtitlesService.getJobCues(jobId).subscribe({
       next: cues => {
         if (cues && cues.length > 0) {
-          this.editableCues.set(cues.map(c => ({...c})));
+          this.setInitialCues(cues);
           return;
         }
         this.subtitlesService.downloadFile(jobId, 'vtt').subscribe({
           next: async blob => {
             try {
               const text = await blob.text();
-              this.editableCues.set(this.parseWebVtt(text));
+              this.setInitialCues(this.parseWebVtt(text));
             } catch (e) {
               console.warn('Failed to parse WebVTT cues fallback:', e);
             }
@@ -955,7 +1024,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
           next: async blob => {
             try {
               const text = await blob.text();
-              this.editableCues.set(this.parseWebVtt(text));
+              this.setInitialCues(this.parseWebVtt(text));
             } catch (e) {
               console.warn('Failed to parse WebVTT cues fallback:', e);
             }
@@ -997,10 +1066,14 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
 
     if (res.job_id) {
       this.activeJobId.set(res.job_id);
+      this.sidecarRevision.set(1);
+      this.burnedRevision.set(1);
+      this.burnedNeedsReburn.set(false);
+      this.lastSavedAt.set(null);
 
       // 1. Load structured timestamped cues for the Cue Editor & Soft Overlay
       if (res.cues && res.cues.length > 0) {
-        this.editableCues.set(res.cues.map(c => ({...c})));
+        this.setInitialCues(res.cues);
       } else {
         this.loadCuesFallback(res.job_id);
       }
@@ -1160,12 +1233,42 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       return;
 
     this.isDownloadingFile.set(type);
-    this.subtitlesService.downloadFile(jobId, type).subscribe({
+
+    // If the user edited cues and clicked Download directly, auto-save edits first
+    // so the downloaded .vtt/.srt is guaranteed to include their latest changes!
+    const downloadObs = this.cuesDirty()
+      ? this.subtitlesService
+          .updateJobCues(jobId, this.editableCues(), false)
+          .pipe(
+            switchMap(res => {
+              const updatedList =
+                res.cues && res.cues.length > 0
+                  ? res.cues.map(c => ({...c}))
+                  : this.editableCues().map(c => ({...c}));
+              this.setInitialCues(updatedList);
+              this.sidecarRevision.update(v => v + 1);
+              const nowStr = new Date().toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+              });
+              this.lastSavedAt.set(nowStr);
+              this.cueSaveMessage.set(
+                `Auto-saved edits & updated .VTT / .SRT (v${this.sidecarRevision()} · ${nowStr})`,
+              );
+              return this.subtitlesService.downloadFile(jobId, type);
+            }),
+          )
+      : this.subtitlesService.downloadFile(jobId, type);
+
+    downloadObs.subscribe({
       next: blob => {
         this.isDownloadingFile.set(null);
+        const revSuffix =
+          this.sidecarRevision() > 1 ? ` (v${this.sidecarRevision()})` : '';
         this.triggerBrowserDownload(
           blob,
-          `${this.currentPackageDisplayName()}.${type}`,
+          `${this.currentPackageDisplayName()}${revSuffix}.${type}`,
         );
       },
       error: async err => {
@@ -1227,7 +1330,34 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     const workspaceId = rawWorkspaceId ? Number(rawWorkspaceId) : null;
 
     this.isSavingToGallery.set(true);
-    this.subtitlesService.saveToGallery(jobId, workspaceId, pkgName).subscribe({
+    const saveObs = this.cuesDirty()
+      ? this.subtitlesService
+          .updateJobCues(jobId, this.editableCues(), false)
+          .pipe(
+            switchMap(res => {
+              const updatedList =
+                res.cues && res.cues.length > 0
+                  ? res.cues.map(c => ({...c}))
+                  : this.editableCues().map(c => ({...c}));
+              this.setInitialCues(updatedList);
+              this.sidecarRevision.update(v => v + 1);
+              this.lastSavedAt.set(
+                new Date().toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                }),
+              );
+              return this.subtitlesService.saveToGallery(
+                jobId,
+                workspaceId,
+                pkgName,
+              );
+            }),
+          )
+      : this.subtitlesService.saveToGallery(jobId, workspaceId, pkgName);
+
+    saveObs.subscribe({
       next: res => {
         this.isSavingToGallery.set(false);
         this.savedPackageName.set(res.asset_name || pkgName);

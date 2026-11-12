@@ -1635,12 +1635,19 @@ class SubtitleService:
 
         self.engine.export_vtt_srt(normalized_segments, vtt_path, srt_path)
 
-        rev = int(time.time())
-        vtt_gcs = self._upload_artifact_to_gcs(
+        rev = int(time.time() * 1000)
+        # Update canonical filenames for gallery/zip AND write cache-busted revision blobs for downloads
+        self._upload_artifact_to_gcs(
             job_id, vtt_path, target_filename="subtitles.vtt"
         )
-        srt_gcs = self._upload_artifact_to_gcs(
+        self._upload_artifact_to_gcs(
             job_id, srt_path, target_filename="subtitles.srt"
+        )
+        vtt_gcs = self._upload_artifact_to_gcs(
+            job_id, vtt_path, target_filename=f"subtitles_{rev}.vtt"
+        )
+        srt_gcs = self._upload_artifact_to_gcs(
+            job_id, srt_path, target_filename=f"subtitles_{rev}.srt"
         )
 
         source_local = self.get_artifact_file(job_id, "source_video")

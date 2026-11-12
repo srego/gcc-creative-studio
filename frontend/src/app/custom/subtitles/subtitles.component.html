@@ -14,28 +14,29 @@
  limitations under the License.
 -->
 
-<div class="min-h-screen pl-24 pr-6 pt-16 pb-12 md:pl-28 md:pr-10 md:pt-14 text-neutral-100 flex flex-col gap-6 max-w-4xl mx-auto">
+<div class="min-h-screen pl-24 pr-6 pt-16 pb-12 md:pl-28 md:pr-10 md:pt-14 text-neutral-100 flex flex-col gap-5 max-w-4xl mx-auto">
   <!-- Page Header -->
   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
     <div class="flex items-center gap-4">
-      <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-500 p-0.5 shadow-lg shadow-indigo-500/20 shrink-0">
+      <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-500 p-0.5 shadow-lg shadow-indigo-500/20 shrink-0">
         <div class="w-full h-full bg-neutral-900/80 backdrop-blur-xl rounded-[14px] flex items-center justify-center">
-          <mat-icon class="text-indigo-400 text-3xl">subtitles</mat-icon>
+          <mat-icon class="text-indigo-400 text-2xl">subtitles</mat-icon>
         </div>
       </div>
       <div>
-        <h1 class="text-3xl font-bold tracking-tight bg-gradient-to-r from-white via-neutral-200 to-neutral-400 bg-clip-text text-transparent">
+        <div role="heading" aria-level="1" class="text-2xl font-bold tracking-tight bg-gradient-to-r from-white via-neutral-200 to-neutral-400 bg-clip-text text-transparent leading-tight">
           Video Subtitles Studio
-        </h1>
-        <p class="text-sm text-neutral-400 mt-1">
+        </div>
+        <p class="text-xs sm:text-sm text-neutral-400 mt-0.5 mb-0">
           Generate, review, and overlay acoustically synchronized broadcast subtitles for video and audio content.
         </p>
       </div>
     </div>
 
     <button
+      type="button"
       (click)="resetStudio()"
-      class="self-start sm:self-auto flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-neutral-200 hover:text-white text-xs font-semibold border border-white/10 transition-all cursor-pointer shadow-sm hover:border-indigo-500/40"
+      class="self-start sm:self-auto flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-neutral-200 hover:text-white text-xs font-semibold border border-white/10 transition-all cursor-pointer shadow-sm hover:border-indigo-500/40"
       title="Reset studio and start fresh"
     >
       <mat-icon class="text-base text-indigo-400">restart_alt</mat-icon>
@@ -47,8 +48,8 @@
   <div *ngIf="errorMessage()" class="p-4 rounded-2xl bg-red-950/60 border border-red-500/30 text-red-200 text-xs flex items-start gap-3 shadow-md">
     <mat-icon class="text-red-400 text-base mt-0.5 shrink-0">error</mat-icon>
     <div class="flex-1">
-      <p class="font-semibold text-red-300">Subtitle Studio Error</p>
-      <p class="text-xs text-red-300/90 mt-0.5">{{ errorMessage() }}</p>
+      <div class="font-semibold text-red-300">Subtitle Studio Error</div>
+      <div class="text-xs text-red-300/90 mt-0.5">{{ errorMessage() }}</div>
     </div>
   </div>
 
@@ -59,12 +60,13 @@
     <!-- Step 1: Source Media Input + Inline Source Preview -->
     <div class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col gap-5">
       <div class="flex items-center justify-between">
-        <h2 class="text-lg font-semibold flex items-center gap-2 text-white">
+        <div role="heading" aria-level="2" class="text-base font-semibold flex items-center gap-2 text-white">
           <mat-icon class="text-blue-400">video_library</mat-icon>
-          1. Source Media Input
-        </h2>
+          <span>1. Source Media Input</span>
+        </div>
         <div class="flex items-center gap-2.5">
           <button
+            type="button"
             (click)="resetStudio()"
             class="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/15 text-neutral-300 hover:text-white text-xs border border-white/10 transition-all cursor-pointer shadow-sm"
             title="Reset studio and start fresh"
@@ -79,30 +81,33 @@
       <!-- Source Tabs -->
       <div class="flex p-1 bg-neutral-900/80 border border-neutral-800 rounded-xl">
         <button
+          type="button"
           (click)="setActiveTab('upload')"
           [ngClass]="activeTab() === 'upload' ? 'bg-indigo-600 text-white shadow-md' : 'text-neutral-400 hover:text-white'"
           class="flex-1 py-2.5 px-3 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer"
         >
           <mat-icon class="text-base">cloud_upload</mat-icon>
-          Upload File
+          <span>Upload File</span>
         </button>
 
         <button
+          type="button"
           (click)="setActiveTab('gallery')"
           [ngClass]="activeTab() === 'gallery' ? 'bg-indigo-600 text-white shadow-md' : 'text-neutral-400 hover:text-white'"
           class="flex-1 py-2.5 px-3 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer"
         >
           <mat-icon class="text-base">collections</mat-icon>
-          Media Gallery
+          <span>Media Gallery</span>
         </button>
 
         <button
+          type="button"
           (click)="setActiveTab('url')"
           [ngClass]="activeTab() === 'url' ? 'bg-indigo-600 text-white shadow-md' : 'text-neutral-400 hover:text-white'"
           class="flex-1 py-2.5 px-3 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer"
         >
           <mat-icon class="text-base">link</mat-icon>
-          GCS / Video URL
+          <span>GCS / Video URL</span>
         </button>
       </div>
 
@@ -127,16 +132,16 @@
           </div>
 
           <div *ngIf="!selectedFile()">
-            <p class="text-sm font-medium text-neutral-200">
+            <div class="text-sm font-medium text-neutral-200">
               Drag &amp; drop source video/audio here, or <span class="text-indigo-400 underline">browse file</span>
-            </p>
-            <p class="text-xs text-neutral-500 mt-1">Supports MP4, MOV, WEBM, MP3, WAV (Up to 500MB)</p>
+            </div>
+            <div class="text-xs text-neutral-500 mt-1">Supports MP4, MOV, WEBM, MP3, WAV (Up to 500MB)</div>
           </div>
 
           <div *ngIf="selectedFile()" class="flex items-center gap-3 bg-indigo-950/60 border border-indigo-500/30 px-4 py-2 rounded-lg z-20">
             <mat-icon class="text-indigo-400">movie</mat-icon>
             <span class="text-sm font-medium text-neutral-100 truncate max-w-xs">{{ selectedFile()?.name }}</span>
-            <button (click)="clearSelection()" class="text-neutral-400 hover:text-red-400 transition-colors cursor-pointer">
+            <button type="button" (click)="clearSelection()" class="text-neutral-400 hover:text-red-400 transition-colors cursor-pointer">
               <mat-icon class="text-lg">close</mat-icon>
             </button>
           </div>
@@ -147,14 +152,15 @@
       <div *ngIf="activeTab() === 'gallery'" class="flex flex-col gap-3">
         <div *ngIf="!selectedGalleryAsset()">
           <button
+            type="button"
             (click)="openGallerySelector()"
             class="w-full py-8 border-2 border-dashed border-neutral-700 hover:border-indigo-500 rounded-xl bg-neutral-900/40 hover:bg-indigo-500/5 transition-all flex flex-col items-center justify-center gap-3 group cursor-pointer"
           >
             <div class="w-12 h-12 rounded-full bg-neutral-800 flex items-center justify-center text-indigo-400 group-hover:scale-110 transition-transform">
               <mat-icon class="text-2xl">collections</mat-icon>
             </div>
-            <p class="text-sm font-semibold text-neutral-200">Browse &amp; Select from Media Gallery</p>
-            <p class="text-xs text-neutral-400">Opens the Creative Studio media asset selector</p>
+            <div class="text-sm font-semibold text-neutral-200">Browse &amp; Select from Media Gallery</div>
+            <div class="text-xs text-neutral-400">Opens the Creative Studio media asset selector</div>
           </button>
         </div>
 
@@ -164,16 +170,17 @@
               <mat-icon>movie</mat-icon>
             </div>
             <div>
-              <p class="text-sm font-semibold text-white">{{ selectedGalleryAsset()?.title }}</p>
-              <p class="text-xs text-indigo-300">Selected from Creative Studio Media Gallery</p>
+              <div class="text-sm font-semibold text-white">{{ selectedGalleryAsset()?.title }}</div>
+              <div class="text-xs text-indigo-300">Selected from Creative Studio Media Gallery</div>
             </div>
           </div>
           <button
+            type="button"
             (click)="openGallerySelector()"
             class="px-3 py-1.5 rounded-lg bg-indigo-600/40 hover:bg-indigo-600 text-xs font-semibold text-indigo-200 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer"
           >
             <mat-icon class="text-sm">sync</mat-icon>
-            Change Media
+            <span>Change Media</span>
           </button>
         </div>
       </div>
@@ -193,18 +200,18 @@
 
         <div class="p-3 rounded-xl bg-amber-950/30 border border-amber-500/20 flex items-start gap-2.5 text-amber-300/90 text-xs">
           <mat-icon class="text-amber-400 text-base mt-0.5">info</mat-icon>
-          <p>
+          <div>
             <strong>Note:</strong> Supports Cloud Storage URIs (<code>gs://...</code>) and direct video URLs (<code>.mp4</code>, <code>.mov</code>, <code>.webm</code>). YouTube links may be blocked on Cloud Run by bot checks—upload directly or select from Media Gallery for best reliability.
-          </p>
+          </div>
         </div>
       </div>
 
-      <!-- Inline Source Media Preview (Revealed as soon as a source is chosen) -->
-      <div *ngIf="sourceVideoPreviewUrl()" class="pt-3 border-t border-neutral-800 flex flex-col gap-2">
+      <!-- Inline Source Media Preview -->
+      <div *ngIf="sourceVideoPreviewUrl()" class="pt-4 border-t border-neutral-800 flex flex-col gap-2">
         <div class="flex items-center justify-between">
           <span class="flex items-center gap-1.5 text-xs font-semibold text-neutral-300">
             <mat-icon class="text-teal-400 text-sm">videocam</mat-icon>
-            Source Media Preview
+            <span>Source Media Preview</span>
           </span>
           <span class="px-2.5 py-0.5 rounded-full bg-teal-500/20 text-teal-300 text-xs font-bold border border-teal-500/30 uppercase tracking-wider">
             Source
@@ -225,13 +232,13 @@
     </div>
 
     <!-- Step 2: Subtitle Configuration -->
-    <div class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col gap-6">
-      <h2 class="text-lg font-semibold flex items-center gap-2 text-white">
+    <div class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col gap-5">
+      <div role="heading" aria-level="2" class="text-base font-semibold flex items-center gap-2 text-white">
         <mat-icon class="text-purple-400">tune</mat-icon>
-        2. Subtitle Configuration
-      </h2>
+        <span>2. Subtitle Configuration</span>
+      </div>
 
-      <!-- Folder Name -->
+      <!-- Package Name -->
       <div>
         <label class="block text-xs font-medium text-neutral-400 mb-2 uppercase tracking-wider">
           Package Name <span class="text-neutral-500 font-normal normal-case">(used for downloads and Media Gallery title)</span>
@@ -252,30 +259,7 @@
           Output Types <span class="text-neutral-500 font-normal normal-case">(Select one or both—each selected type gets its own preview player)</span>
         </label>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <!-- Dynamic Subtitles (Soft / Not Burned-In) -->
-          <div
-            role="checkbox"
-            [attr.aria-checked]="enableDynamicSubtitles()"
-            tabindex="0"
-            (keydown.enter)="toggleDynamicSubtitles()"
-            (keydown.space)="toggleDynamicSubtitles(); $event.preventDefault()"
-            (click)="toggleDynamicSubtitles()"
-            [ngClass]="enableDynamicSubtitles() ? 'border-indigo-500 bg-indigo-950/40' : 'border-neutral-800 bg-neutral-900/40'"
-            class="p-4 rounded-xl border flex items-start gap-3 cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-          >
-            <div
-              [ngClass]="enableDynamicSubtitles() ? 'bg-indigo-600 border-indigo-500' : 'bg-neutral-800 border-neutral-700'"
-              class="w-5 h-5 rounded border flex items-center justify-center mt-0.5 transition-colors shrink-0"
-            >
-              <mat-icon *ngIf="enableDynamicSubtitles()" class="text-white text-xs">check</mat-icon>
-            </div>
-            <div>
-              <p class="text-xs font-semibold text-neutral-100">Dynamic Subtitles (Not Burned-In)</p>
-              <p class="text-xs text-neutral-400 mt-0.5">Generates <strong>.vtt</strong> &amp; <strong>.srt</strong> caption tracks with live toggleable CC preview.</p>
-            </div>
-          </div>
-
-          <!-- Burned-In Video (Static MP4) -->
+          <!-- Burned-In Video (Listed first to match output order!) -->
           <div
             role="checkbox"
             [attr.aria-checked]="enableBurnedInVideo()"
@@ -294,14 +278,37 @@
                 <mat-icon *ngIf="enableBurnedInVideo()" class="text-white text-xs">check</mat-icon>
               </div>
               <div>
-                <p class="text-xs font-semibold text-neutral-100">Burned-In Video (Static MP4)</p>
-                <p class="text-xs text-neutral-400 mt-0.5">Renders captions permanently onto video frames (<code>.mp4</code>).</p>
+                <div class="text-xs font-semibold text-neutral-100">Burned-In Video (Static MP4)</div>
+                <div class="text-xs text-neutral-400 mt-0.5">Renders captions permanently onto video frames (<code>.mp4</code>).</div>
               </div>
             </div>
 
             <div class="p-2.5 rounded-lg bg-amber-950/40 border border-amber-500/30 text-amber-300/90 text-xs flex items-start gap-2 mt-1">
               <mat-icon class="text-amber-400 text-sm mt-0.5 shrink-0">warning</mat-icon>
               <span>Requires FFmpeg video re-encoding and takes slightly longer to process.</span>
+            </div>
+          </div>
+
+          <!-- Dynamic Subtitles (Not Burned-In) -->
+          <div
+            role="checkbox"
+            [attr.aria-checked]="enableDynamicSubtitles()"
+            tabindex="0"
+            (keydown.enter)="toggleDynamicSubtitles()"
+            (keydown.space)="toggleDynamicSubtitles(); $event.preventDefault()"
+            (click)="toggleDynamicSubtitles()"
+            [ngClass]="enableDynamicSubtitles() ? 'border-indigo-500 bg-indigo-950/40' : 'border-neutral-800 bg-neutral-900/40'"
+            class="p-4 rounded-xl border flex items-start gap-3 cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+          >
+            <div
+              [ngClass]="enableDynamicSubtitles() ? 'bg-indigo-600 border-indigo-500' : 'bg-neutral-800 border-neutral-700'"
+              class="w-5 h-5 rounded border flex items-center justify-center mt-0.5 transition-colors shrink-0"
+            >
+              <mat-icon *ngIf="enableDynamicSubtitles()" class="text-white text-xs">check</mat-icon>
+            </div>
+            <div>
+              <div class="text-xs font-semibold text-neutral-100">Dynamic Subtitles (Not Burned-In)</div>
+              <div class="text-xs text-neutral-400 mt-0.5">Generates editable <strong>.vtt</strong> &amp; <strong>.srt</strong> caption files with live toggleable CC preview.</div>
             </div>
           </div>
         </div>
@@ -325,6 +332,7 @@
     <!-- Step 3: Action & Progress Bar -->
     <div class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col gap-4">
       <button
+        type="button"
         (click)="startGeneration()"
         [disabled]="!hasInput() || !hasValidOutput() || isProcessing()"
         [ngClass]="{'opacity-50 cursor-not-allowed': !hasInput() || !hasValidOutput() || isProcessing()}"
@@ -356,20 +364,21 @@
 
   <!-- ===================================================================== -->
   <!-- POST-GENERATION SINGLE-COLUMN FLOW                                    -->
+  <!-- Order: Summary -> 1. Burned-In Video -> 2. Unified Dynamic + Editor   -->
   <!-- ===================================================================== -->
   <ng-container *ngIf="isComplete()">
-    <!-- 1. Package Summary Card + Optional Original Source Comparison Toggle -->
-    <div class="bg-gradient-to-b from-emerald-950/40 via-neutral-900/90 to-neutral-900/90 backdrop-blur-xl border border-emerald-500/30 rounded-2xl p-6 shadow-xl flex flex-col gap-4">
+    <!-- Summary Header Card -->
+    <div class="bg-gradient-to-b from-emerald-950/40 via-neutral-900/90 to-neutral-900/90 backdrop-blur-xl border border-emerald-500/30 rounded-2xl p-5 shadow-xl flex flex-col gap-3.5">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
-            <mat-icon>verified</mat-icon>
+          <div class="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
+            <mat-icon class="text-xl">verified</mat-icon>
           </div>
           <div>
-            <h2 class="text-base font-bold text-white leading-tight">{{ currentPackageDisplayName() }}</h2>
-            <p class="text-xs text-emerald-400 font-medium mt-0.5">
-              Subtitle Package Ready · {{ editableCues().length }} synchronized broadcast cues
-            </p>
+            <div class="text-base font-bold text-white leading-tight">{{ currentPackageDisplayName() }}</div>
+            <div class="text-xs text-emerald-400 font-medium mt-0.5">
+              Package Ready · {{ editableCues().length }} synchronized broadcast cues
+            </div>
           </div>
         </div>
 
@@ -394,33 +403,18 @@
         </div>
       </div>
 
-      <div class="flex flex-wrap gap-2 pt-2 border-t border-neutral-800 text-xs">
-        <span class="px-2.5 py-1 rounded-lg bg-neutral-800/80 border border-neutral-700 text-neutral-300 flex items-center gap-1.5">
-          <mat-icon class="text-xs text-indigo-400">graphic_eq</mat-icon>
-          <span>Acoustic VAD + STT v2 chirp_3 (Denoiser)</span>
-        </span>
-        <span class="px-2.5 py-1 rounded-lg bg-neutral-800/80 border border-neutral-700 text-neutral-300 flex items-center gap-1.5">
-          <mat-icon class="text-xs text-purple-400">subtitles</mat-icon>
-          <span>2-Line Broadcast Viterbi (&le;42 chars/line)</span>
-        </span>
-        <span class="px-2.5 py-1 rounded-lg bg-neutral-800/80 border border-neutral-700 text-neutral-300 flex items-center gap-1.5">
-          <mat-icon class="text-xs text-teal-400">translate</mat-icon>
-          <span>Language: {{ sourceLanguage() }}</span>
-        </span>
-      </div>
-
       <!-- Optional Expandable Original Source Media Player -->
       <div *ngIf="showOriginalSourcePostRun() && sourceVideoPreviewUrl()" class="pt-3 border-t border-neutral-800 flex flex-col gap-2">
         <div class="flex items-center justify-between">
           <span class="flex items-center gap-1.5 text-xs font-semibold text-teal-300">
             <mat-icon class="text-teal-400 text-sm">videocam</mat-icon>
-            Original Unmodified Source Media
+            <span>Original Unmodified Source Media</span>
           </span>
           <span class="px-2.5 py-0.5 rounded-full bg-teal-500/20 text-teal-300 text-xs font-bold border border-teal-500/30 uppercase tracking-wider">
             Source
           </span>
         </div>
-        <div class="aspect-video max-h-[340px] w-full bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 flex items-center justify-center">
+        <div class="aspect-video max-h-[320px] w-full bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 flex items-center justify-center">
           <video
             #sourceVideoPlayer
             [src]="sourceVideoPreviewUrl()"
@@ -434,220 +428,64 @@
       </div>
     </div>
 
-    <!-- 2. Dynamic Subtitles Preview (Not Burned-In) — Rendered when Dynamic Subtitles was requested! -->
-    <div
-      *ngIf="enableDynamicSubtitles()"
-      class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-indigo-500/30 rounded-2xl p-6 shadow-xl flex flex-col gap-4"
-    >
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <div class="flex items-center gap-2">
-          <mat-icon class="text-indigo-400">closed_caption</mat-icon>
-          <div>
-            <h3 class="text-base font-semibold text-white leading-tight">
-              Dynamic Subtitles Preview (Not Burned-In)
-            </h3>
-            <p class="text-xs text-neutral-400">
-              Live soft-caption overlay synced to your <code>.vtt</code> / <code>.srt</code> tracks—updates immediately as you edit cues below.
-            </p>
-          </div>
-        </div>
-        <div class="flex items-center gap-2">
-          <button
-            type="button"
-            (click)="toggleSoftCc()"
-            [ngClass]="softCcEnabled() ? 'bg-indigo-600 text-white border-indigo-400' : 'bg-neutral-800 text-neutral-400 border-neutral-700'"
-            class="px-3 py-1 rounded-full text-xs font-bold border uppercase tracking-wider cursor-pointer transition-colors"
-          >
-            {{ softCcEnabled() ? 'CC ON' : 'CC OFF' }}
-          </button>
-          <span class="px-2.5 py-1 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-bold border border-indigo-500/30 uppercase tracking-wider">
-            Soft .VTT
-          </span>
-        </div>
-      </div>
-
-      <div class="aspect-video max-h-[380px] w-full bg-neutral-950 rounded-xl overflow-hidden border border-indigo-500/30 relative flex items-center justify-center shadow-lg">
-        <video
-          #softVideoPlayer
-          *ngIf="softVideoPreviewUrl()"
-          [src]="softVideoPreviewUrl()"
-          controls
-          playsinline
-          preload="auto"
-          (timeupdate)="onSoftVideoTimeUpdate($event)"
-          (seeked)="onSoftVideoTimeUpdate($event)"
-          (loadedmetadata)="onSoftVideoTimeUpdate($event)"
-          (error)="onSoftVideoError($event)"
-          class="w-full h-full object-contain"
-        ></video>
-
-        <div *ngIf="!softVideoPreviewUrl()" class="flex flex-col items-center justify-center gap-2 text-neutral-500">
-          <mat-icon class="text-3xl text-neutral-600 animate-pulse">movie</mat-icon>
-          <p class="text-xs">Loading dynamic subtitle preview stream...</p>
-        </div>
-
-        <!-- Synchronized 2-Line Broadcast Soft-Caption Overlay -->
-        <div
-          *ngIf="softCcEnabled() && activeCueText()"
-          class="absolute bottom-12 inset-x-4 text-center pointer-events-none z-10"
-        >
-          <span class="bg-black/85 text-white font-medium px-4 py-1.5 rounded-lg text-sm leading-snug border border-white/10 inline-block shadow-lg whitespace-pre-line max-w-[92%]">
-            {{ activeCueText() }}
-          </span>
-        </div>
-      </div>
-
-      <!-- Download Sidecars Row -->
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-        <button
-          type="button"
-          (click)="downloadCaptions('vtt')"
-          class="py-2.5 px-4 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 hover:border-indigo-500/50 text-neutral-200 hover:text-white text-xs font-semibold transition-all flex items-center justify-between cursor-pointer"
-        >
-          <span class="flex items-center gap-2">
-            <mat-icon class="text-indigo-400 text-base">description</mat-icon>
-            Download WebVTT (.vtt)
-          </span>
-          <mat-icon class="text-neutral-400 text-base">download</mat-icon>
-        </button>
-
-        <button
-          type="button"
-          (click)="downloadCaptions('srt')"
-          class="py-2.5 px-4 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 hover:border-indigo-500/50 text-neutral-200 hover:text-white text-xs font-semibold transition-all flex items-center justify-between cursor-pointer"
-        >
-          <span class="flex items-center gap-2">
-            <mat-icon class="text-indigo-400 text-base">subtitles</mat-icon>
-            Download SubRip (.srt)
-          </span>
-          <mat-icon class="text-neutral-400 text-base">download</mat-icon>
-        </button>
-      </div>
-    </div>
-
-    <!-- 3. Interactive Timestamped Cue List & Editor -->
-    <div
-      *ngIf="editableCues().length > 0"
-      class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col gap-4"
-    >
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h3 class="text-base font-semibold text-white flex items-center gap-2">
-            <mat-icon class="text-indigo-400">edit_note</mat-icon>
-            Timestamped Caption Cues ({{ editableCues().length }})
-          </h3>
-          <p class="text-xs text-neutral-400 mt-0.5">
-            Click any timestamp to jump the video player to that moment, or edit caption text directly.
-          </p>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2">
-          <span
-            *ngIf="cueSaveMessage() && !cuesDirty()"
-            class="px-3 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-medium"
-          >
-            {{ cueSaveMessage() }}
-          </span>
-
-          <button
-            *ngIf="cuesDirty()"
-            type="button"
-            [disabled]="isSavingCues() || isReburningVideo()"
-            (click)="saveCueEdits(false)"
-            class="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shadow-md"
-          >
-            <mat-icon *ngIf="isSavingCues()" class="text-sm animate-spin">sync</mat-icon>
-            <mat-icon *ngIf="!isSavingCues()" class="text-sm">save</mat-icon>
-            <span>{{ isSavingCues() ? 'Saving .VTT/.SRT...' : 'Save .VTT / .SRT Edits' }}</span>
-          </button>
-
-          <button
-            *ngIf="cuesDirty() && enableBurnedInVideo()"
-            type="button"
-            [disabled]="isSavingCues() || isReburningVideo()"
-            (click)="saveCueEdits(true)"
-            class="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shadow-md"
-          >
-            <mat-icon *ngIf="isReburningVideo()" class="text-sm animate-spin">sync</mat-icon>
-            <mat-icon *ngIf="!isReburningVideo()" class="text-sm">movie_filter</mat-icon>
-            <span>{{ isReburningVideo() ? 'Re-Burning MP4...' : 'Save & Re-Burn MP4' }}</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Scrollable Cues List -->
-      <div class="max-h-[340px] overflow-y-auto pr-1 flex flex-col gap-2.5">
-        <div
-          *ngFor="let cue of editableCues(); let i = index; trackBy: trackByCueIndex"
-          [ngClass]="activeCueIndex() === i ? 'border-indigo-500 bg-indigo-950/30' : 'border-neutral-800 bg-neutral-900/60'"
-          class="rounded-xl p-3 border transition-colors flex flex-col gap-2"
-        >
-          <div class="flex items-center justify-between gap-2">
-            <button
-              type="button"
-              (click)="seekToCue(cue, i)"
-              [ngClass]="activeCueIndex() === i ? 'bg-indigo-600 text-white' : 'bg-neutral-800 hover:bg-neutral-700 text-indigo-300'"
-              class="px-2.5 py-1 rounded-lg font-mono text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
-              title="Seek video player to this cue"
-            >
-              <mat-icon class="text-xs">play_arrow</mat-icon>
-              <span>{{ formatTimestamp(cue.start_time) }} &rarr; {{ formatTimestamp(cue.end_time) }}</span>
-            </button>
-
-            <span
-              class="text-xs font-mono"
-              [ngClass]="maxLineLength(cue.text) > 42 ? 'text-amber-400 font-semibold' : 'text-neutral-400'"
-            >
-              {{ maxLineLength(cue.text) > 42 ? '&#9888; ' : '' }}{{ maxLineLength(cue.text) }}/42 chars/line
-            </span>
-          </div>
-
-          <textarea
-            rows="2"
-            [value]="cue.text"
-            (focus)="activeCueIndex.set(i)"
-            (input)="onCueTextChange(i, $any($event.target).value)"
-            class="w-full rounded-lg px-3 py-2 text-xs sm:text-sm bg-neutral-950/80 text-neutral-100 border border-neutral-800 focus:outline-none focus:border-indigo-500 resize-none leading-snug"
-          ></textarea>
-        </div>
-      </div>
-    </div>
-
-    <!-- 4. Burned-In Subtitled Video Preview (Static MP4) — Rendered when Burned-In Video was requested! -->
+    <!-- =================================================================== -->
+    <!-- CARD 1 (TOP): BURNED-IN SUBTITLED VIDEO (When Burned-In Requested)  -->
+    <!-- =================================================================== -->
     <div
       *ngIf="enableBurnedInVideo()"
-      class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-purple-500/30 rounded-2xl p-6 shadow-xl flex flex-col gap-4"
+      class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-purple-500/30 rounded-2xl p-5 shadow-xl flex flex-col gap-4"
     >
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <div class="flex items-center gap-2">
-          <mat-icon class="text-purple-400">movie_filter</mat-icon>
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shrink-0">
+            <mat-icon class="text-lg">movie_filter</mat-icon>
+          </div>
           <div>
-            <h3 class="text-base font-semibold text-white leading-tight">
-              Burned-In Subtitled Video (Hard-Encoded MP4)
-            </h3>
-            <p class="text-xs text-neutral-400">
-              Subtitles permanently rendered onto video frames via FFmpeg.
-            </p>
+            <div role="heading" aria-level="2" class="text-base font-semibold text-white leading-tight">
+              Burned-In Subtitled Video
+            </div>
+            <div class="text-xs text-neutral-400">
+              Captions permanently baked onto MP4 video frames via FFmpeg.
+            </div>
           </div>
         </div>
         <span class="px-2.5 py-1 rounded-full bg-purple-500/20 text-purple-300 text-xs font-bold border border-purple-500/30 uppercase tracking-wider">
-          Burned-In .MP4
+          Burned-In MP4 · v{{ burnedRevision() }}
         </span>
       </div>
 
+      <!-- Sync Alert if Captions Were Edited Below -->
       <div
-        *ngIf="cuesDirty()"
-        class="p-3 rounded-xl bg-amber-950/40 border border-amber-500/30 text-amber-200 text-xs flex items-center justify-between gap-3"
+        *ngIf="burnedNeedsReburn()"
+        class="p-3 rounded-xl bg-amber-950/50 border border-amber-500/40 text-amber-200 text-xs flex flex-wrap items-center justify-between gap-3"
       >
-        <span>You edited caption text above. Click <strong>Save &amp; Re-Burn MP4</strong> to re-render the burned video frames.</span>
+        <div class="flex items-center gap-2">
+          <mat-icon class="text-amber-400 text-base shrink-0">sync_problem</mat-icon>
+          <span>
+            Caption text was edited below—this MP4 still shows <strong>v{{ burnedRevision() }}</strong> frames. Click <strong>Re-Burn MP4</strong> to bake your updated text into the video.
+          </span>
+        </div>
         <button
           type="button"
-          [disabled]="isReburningVideo()"
+          [disabled]="isReburningVideo() || isSavingCues()"
           (click)="saveCueEdits(true)"
-          class="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shrink-0 cursor-pointer"
+          class="px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shrink-0 flex items-center gap-1.5 cursor-pointer shadow-sm"
         >
-          {{ isReburningVideo() ? 'Re-Burning...' : 'Save & Re-Burn MP4' }}
+          <mat-icon *ngIf="isReburningVideo()" class="text-sm animate-spin">sync</mat-icon>
+          <mat-icon *ngIf="!isReburningVideo()" class="text-sm">movie_filter</mat-icon>
+          <span>{{ isReburningVideo() ? 'Re-Burning MP4...' : 'Re-Burn MP4 Now' }}</span>
         </button>
+      </div>
+
+      <!-- Green Sync Confirmation After Re-Burn -->
+      <div
+        *ngIf="!burnedNeedsReburn() && burnedRevision() > 1"
+        class="p-2.5 px-3.5 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2"
+      >
+        <mat-icon class="text-emerald-400 text-base shrink-0">check_circle</mat-icon>
+        <span>
+          Burned-In MP4 updated with your edited captions (<strong>v{{ burnedRevision() }}</strong> · Saved {{ lastSavedAt() }})—ready to preview and download.
+        </span>
       </div>
 
       <div class="aspect-video max-h-[380px] w-full bg-neutral-950 rounded-xl overflow-hidden border border-purple-500/30 relative flex items-center justify-center shadow-lg">
@@ -664,20 +502,22 @@
         ></video>
         <div *ngIf="!burnedVideoPreviewUrl()" class="flex flex-col items-center justify-center gap-2 text-neutral-500">
           <mat-icon class="text-3xl text-neutral-600 animate-pulse">movie</mat-icon>
-          <p class="text-xs">Loading burned-in video stream...</p>
+          <div class="text-xs">Loading burned-in video stream...</div>
         </div>
       </div>
 
       <button
         type="button"
         (click)="downloadBurnedVideo()"
-        class="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-semibold text-xs transition-all flex items-center justify-between shadow-lg group cursor-pointer"
+        class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-semibold text-xs transition-all flex items-center justify-between shadow-lg group cursor-pointer"
       >
         <div class="flex items-center gap-2.5">
           <mat-icon class="text-white text-lg">movie</mat-icon>
           <div class="text-left">
-            <p class="font-bold text-white leading-none">Download Burned-In Video (.mp4)</p>
-            <p class="text-xs text-white/80 mt-0.5">{{ currentPackageDisplayName() }} (Burned).mp4</p>
+            <div class="font-bold text-white leading-none">
+              {{ burnedRevision() > 1 ? 'Download Updated Burned-In Video (v' + burnedRevision() + ')' : 'Download Burned-In Video (.mp4)' }}
+            </div>
+            <div class="text-xs text-white/80 mt-1">{{ currentPackageDisplayName() }} (Burned).mp4</div>
           </div>
         </div>
         <div class="flex items-center gap-1 bg-white/20 px-2.5 py-1 rounded-lg text-xs font-bold group-hover:bg-white/30 transition-colors">
@@ -687,8 +527,251 @@
       </button>
     </div>
 
-    <!-- 5. Save to Media Gallery & Start Another Video -->
-    <div class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col gap-3">
+    <!-- =================================================================== -->
+    <!-- CARD 2 (UNIFIED): DYNAMIC SUBTITLES PREVIEW + INLINE CUE EDITOR     -->
+    <!-- Video + Cue List + Sync Status + .VTT/.SRT Downloads in ONE card!   -->
+    <!-- =================================================================== -->
+    <div
+      *ngIf="enableDynamicSubtitles() || editableCues().length > 0"
+      class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-indigo-500/30 rounded-2xl p-5 shadow-xl flex flex-col gap-4"
+    >
+      <!-- Unified Card Header -->
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-300 shrink-0">
+            <mat-icon class="text-lg">closed_caption</mat-icon>
+          </div>
+          <div>
+            <div role="heading" aria-level="2" class="text-base font-semibold text-white leading-tight">
+              {{ enableDynamicSubtitles() ? 'Dynamic Subtitles & Caption Editor' : 'Caption Cues Editor' }}
+            </div>
+            <div class="text-xs text-neutral-400">
+              {{ enableDynamicSubtitles() ? 'Toggleable soft captions (.vtt / .srt)—edits below update the live preview immediately.' : 'Edit caption cues below and click Re-Burn MP4 to update the burned video above.' }}
+            </div>
+          </div>
+        </div>
+
+        <div *ngIf="enableDynamicSubtitles()" class="flex items-center gap-2">
+          <button
+            type="button"
+            (click)="toggleSoftCc()"
+            [ngClass]="softCcEnabled() ? 'bg-indigo-600 text-white border-indigo-400' : 'bg-neutral-800 text-neutral-400 border-neutral-700'"
+            class="px-3 py-1 rounded-full text-xs font-bold border uppercase tracking-wider cursor-pointer transition-colors"
+          >
+            {{ softCcEnabled() ? 'CC ON' : 'CC OFF' }}
+          </button>
+          <span class="px-2.5 py-1 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-bold border border-indigo-500/30 uppercase tracking-wider">
+            Soft .VTT · v{{ sidecarRevision() }}
+          </span>
+        </div>
+      </div>
+
+      <!-- Section A: Dynamic Video Player (Directly coupled above its Cue List!) -->
+      <div
+        *ngIf="enableDynamicSubtitles()"
+        class="aspect-video max-h-[380px] w-full bg-neutral-950 rounded-xl overflow-hidden border border-indigo-500/30 relative flex items-center justify-center shadow-lg"
+      >
+        <video
+          #softVideoPlayer
+          *ngIf="softVideoPreviewUrl()"
+          [src]="softVideoPreviewUrl()"
+          controls
+          playsinline
+          preload="auto"
+          (timeupdate)="onSoftVideoTimeUpdate($event)"
+          (seeked)="onSoftVideoTimeUpdate($event)"
+          (loadedmetadata)="onSoftVideoTimeUpdate($event)"
+          (error)="onSoftVideoError($event)"
+          class="w-full h-full object-contain"
+        ></video>
+
+        <div *ngIf="!softVideoPreviewUrl()" class="flex flex-col items-center justify-center gap-2 text-neutral-500">
+          <mat-icon class="text-3xl text-neutral-600 animate-pulse">movie</mat-icon>
+          <div class="text-xs">Loading dynamic subtitle preview stream...</div>
+        </div>
+
+        <!-- Synchronized 2-Line Soft-Caption Overlay -->
+        <div
+          *ngIf="softCcEnabled() && activeCueText()"
+          class="absolute bottom-12 inset-x-4 text-center pointer-events-none z-10"
+        >
+          <span class="bg-black/85 text-white font-medium px-4 py-1.5 rounded-lg text-sm leading-snug border border-white/10 inline-block shadow-lg whitespace-pre-line max-w-[92%]">
+            {{ activeCueText() }}
+          </span>
+        </div>
+      </div>
+
+      <!-- Section B: Directly Attached Cue Editor Workspace (Same Card, No Outer Gap!) -->
+      <div *ngIf="editableCues().length > 0" class="rounded-xl bg-neutral-950/70 border border-neutral-800 p-3.5 flex flex-col gap-3">
+        <div class="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-neutral-800">
+          <div class="flex items-center gap-2">
+            <mat-icon class="text-indigo-400 text-base">edit_note</mat-icon>
+            <span class="text-xs sm:text-sm font-semibold text-neutral-100">
+              Edit Caption Cues ({{ editableCues().length }})
+            </span>
+            <span class="text-xs text-neutral-400 hidden sm:inline">
+              · Click a timestamp to jump the player · Type to edit
+            </span>
+          </div>
+
+          <!-- Save Actions right inside the editor bar -->
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              *ngIf="cuesDirty()"
+              type="button"
+              [disabled]="isSavingCues() || isReburningVideo()"
+              (click)="saveCueEdits(false)"
+              class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+            >
+              <mat-icon *ngIf="isSavingCues()" class="text-sm animate-spin">sync</mat-icon>
+              <mat-icon *ngIf="!isSavingCues()" class="text-sm">save</mat-icon>
+              <span>{{ isSavingCues() ? 'Updating Files...' : 'Save .VTT & .SRT Changes' }}</span>
+            </button>
+
+            <button
+              *ngIf="(cuesDirty() || burnedNeedsReburn()) && enableBurnedInVideo()"
+              type="button"
+              [disabled]="isSavingCues() || isReburningVideo()"
+              (click)="saveCueEdits(true)"
+              class="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+            >
+              <mat-icon *ngIf="isReburningVideo()" class="text-sm animate-spin">sync</mat-icon>
+              <mat-icon *ngIf="!isReburningVideo()" class="text-sm">movie_filter</mat-icon>
+              <span>{{ isReburningVideo() ? 'Re-Burning MP4...' : 'Save & Re-Burn MP4' }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Scrollable Cue Rows -->
+        <div class="h-[310px] overflow-y-auto pr-1 flex flex-col gap-2">
+          <div
+            *ngFor="let cue of editableCues(); let i = index; trackBy: trackByCueIndex"
+            [ngClass]="activeCueIndex() === i ? 'border-indigo-500 bg-indigo-950/35' : 'border-neutral-800 bg-neutral-900/70'"
+            class="rounded-xl p-2.5 border transition-colors flex flex-col gap-1.5"
+          >
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  (click)="seekToCue(cue, i)"
+                  [ngClass]="activeCueIndex() === i ? 'bg-indigo-600 text-white' : 'bg-neutral-800 hover:bg-neutral-700 text-indigo-300'"
+                  class="px-2.5 py-0.5 rounded-md font-mono text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                  title="Jump video player to this timestamp"
+                >
+                  <mat-icon class="text-xs">play_arrow</mat-icon>
+                  <span>{{ formatTimestamp(cue.start_time) }} &rarr; {{ formatTimestamp(cue.end_time) }}</span>
+                </button>
+
+                <span
+                  *ngIf="isCueModified(i)"
+                  class="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold"
+                >
+                  Unsaved edit
+                </span>
+              </div>
+
+              <div class="flex items-center gap-2">
+                <button
+                  *ngIf="isCueModified(i)"
+                  type="button"
+                  (click)="revertCue(i, cueTextarea)"
+                  class="px-2 py-0.5 rounded-md bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs cursor-pointer"
+                  title="Revert this cue to last saved text"
+                >
+                  Undo
+                </button>
+                <span
+                  class="text-xs font-mono"
+                  [ngClass]="maxLineLength(cue.text) > 42 ? 'text-amber-400 font-semibold' : 'text-neutral-400'"
+                >
+                  {{ maxLineLength(cue.text) > 42 ? '&#9888; ' : '' }}{{ maxLineLength(cue.text) }}/42 chars
+                </span>
+              </div>
+            </div>
+
+            <textarea
+              #cueTextarea
+              rows="2"
+              [value]="cue.text"
+              (focus)="activeCueIndex.set(i)"
+              (input)="onCueTextChange(i, $any($event.target).value)"
+              class="w-full rounded-lg px-3 py-1.5 text-xs sm:text-sm bg-neutral-950 text-neutral-100 border border-neutral-800 focus:outline-none focus:border-indigo-500 resize-none leading-snug"
+            ></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section C: Explicit File Sync Status + .VTT / .SRT Downloads (Bottom of Same Card!) -->
+      <div *ngIf="enableDynamicSubtitles()" class="flex flex-col gap-3 pt-1">
+        <!-- State 1: Unsaved Edits Pending -->
+        <div
+          *ngIf="cuesDirty()"
+          class="p-3 rounded-xl bg-amber-950/50 border border-amber-500/40 text-amber-200 text-xs flex flex-wrap items-center justify-between gap-2"
+        >
+          <div class="flex items-center gap-2">
+            <mat-icon class="text-amber-400 text-base shrink-0">edit_notifications</mat-icon>
+            <span>
+              <strong>{{ modifiedCueCount() }} cue(s) edited</strong>—click <strong>Save .VTT &amp; .SRT Changes</strong> (or click Download below to auto-save &amp; download immediately).
+            </span>
+          </div>
+          <button
+            type="button"
+            [disabled]="isSavingCues()"
+            (click)="saveCueEdits(false)"
+            class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold cursor-pointer shrink-0"
+          >
+            {{ isSavingCues() ? 'Saving...' : 'Save .VTT & .SRT Changes' }}
+          </button>
+        </div>
+
+        <!-- State 2: Saved & Verified Updated Revision -->
+        <div
+          *ngIf="!cuesDirty() && sidecarRevision() > 1"
+          class="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2"
+        >
+          <mat-icon class="text-emerald-400 text-base shrink-0">check_circle</mat-icon>
+          <span>
+            <strong>Downloadable .VTT &amp; .SRT files updated!</strong> (Revision <strong>v{{ sidecarRevision() }}</strong> · Saved at {{ lastSavedAt() }})
+          </span>
+        </div>
+
+        <!-- Download Buttons Row -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <button
+            type="button"
+            (click)="downloadCaptions('vtt')"
+            class="py-3 px-4 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 hover:border-indigo-500/50 text-neutral-100 hover:text-white text-xs font-semibold transition-all flex items-center justify-between cursor-pointer"
+          >
+            <span class="flex items-center gap-2">
+              <mat-icon class="text-indigo-400 text-base">description</mat-icon>
+              <span>
+                {{ cuesDirty() ? 'Auto-Save & Download .VTT' : (sidecarRevision() > 1 ? 'Download Updated .VTT (v' + sidecarRevision() + ')' : 'Download WebVTT (.vtt)') }}
+              </span>
+            </span>
+            <mat-icon class="text-neutral-400 text-base">download</mat-icon>
+          </button>
+
+          <button
+            type="button"
+            (click)="downloadCaptions('srt')"
+            class="py-3 px-4 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 hover:border-indigo-500/50 text-neutral-100 hover:text-white text-xs font-semibold transition-all flex items-center justify-between cursor-pointer"
+          >
+            <span class="flex items-center gap-2">
+              <mat-icon class="text-indigo-400 text-base">subtitles</mat-icon>
+              <span>
+                {{ cuesDirty() ? 'Auto-Save & Download .SRT' : (sidecarRevision() > 1 ? 'Download Updated .SRT (v' + sidecarRevision() + ')' : 'Download SubRip (.srt)') }}
+              </span>
+            </span>
+            <mat-icon class="text-neutral-400 text-base">download</mat-icon>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =================================================================== -->
+    <!-- CARD 3: SAVE TO MEDIA GALLERY & RESET                               -->
+    <!-- =================================================================== -->
+    <div class="bg-gradient-to-b from-white/10 to-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-5 shadow-xl flex flex-col gap-3">
       <button
         type="button"
         (click)="saveToMediaGallery()"
