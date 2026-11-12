@@ -51,6 +51,27 @@ class SubtitleRequestDTO(BaseModel):
     )
 
 
+class SubtitleCueDTO(BaseModel):
+    """Single structured timestamped subtitle cue."""
+
+    index: Optional[int] = Field(default=None, description="1-based cue index.")
+    start_time: float = Field(description="Cue start timestamp in seconds.")
+    end_time: float = Field(description="Cue end timestamp in seconds.")
+    text: str = Field(description="One- or two-line subtitle text.")
+
+
+class SubtitleCuesUpdateDTO(BaseModel):
+    """Request payload for updating subtitle cues and optionally re-burning MP4."""
+
+    cues: list[SubtitleCueDTO] = Field(
+        description="Updated list of timestamped subtitle cues."
+    )
+    reburn_video: bool = Field(
+        default=False,
+        description="Whether to re-encode the burned-in MP4 video with updated captions.",
+    )
+
+
 class SubtitleResponseDTO(BaseModel):
     """Response model for subtitle generation and status tracking."""
 
@@ -125,6 +146,10 @@ class SubtitleResponseDTO(BaseModel):
     style_preset: Optional[str] = Field(
         default="minimal",
         description="Subtitle visual style preset applied during rendering.",
+    )
+    cues: Optional[list[SubtitleCueDTO]] = Field(
+        default=None,
+        description="Structured timestamped subtitle cues for live preview and inline editing.",
     )
 
 

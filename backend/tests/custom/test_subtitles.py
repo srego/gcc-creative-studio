@@ -2304,6 +2304,178 @@ def test_chirp3_silence_absorbed_start_offset_clamped():
     assert aligned[1]["end_time"] == 55.20
 
 
+def test_detect_acoustic_speech_islands_and_onset_snapping(tmp_path):
+    """Tests Stage 1 acoustic speech island detection and Stage 3 exact onset snapping."""
+    import array
+    import math
+    import wave
+    from src.custom.subtitles.caption_aligner import (
+        align_words_to_acoustics,
+        detect_acoustic_speech_islands,
+    )
+
+    sr = 16000
+    duration = 8.0
+    samples = array.array("h", [0] * int(sr * duration))
+    # Speech island 1: 2.0s -> 3.2s; Speech island 2: 6.0s -> 7.2s (1kHz vocal-band tone)
+    for t_start, t_end in [(2.0, 3.2), (6.0, 7.2)]:
+        for idx in range(int(t_start * sr), int(t_end * sr)):
+            samples[idx] = int(8000 * math.sin(2.0 * math.pi * 1000.0 * (idx / sr)))
+
+    wav_file = tmp_path / "test_speech.wav"
+    with wave.open(str(wav_file), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(samples.tobytes())
+
+    dur_out, islands = detect_acoustic_speech_islands(str(wav_file))
+    assert abs(dur_out - 8.0) < 0.05
+    assert len(islands) == 2
+    assert 1.90 <= islands[0][0] <= 2.05
+    assert 5.90 <= islands[1][0] <= 6.05
+
+    # Verify Stage 3 snaps a pause-stretched word ("Hello", 3.24 -> 6.35) directly to island 2 (~5.96s)
+    raw_words = [
+        {"word": "First.", "start_time": 2.0, "end_time": 3.2, "speaker": "Speaker 1"},
+        {"word": "Second.", "start_time": 3.24, "end_time": 6.35, "speaker": "Speaker 1"},
+    ]
+    snapped = align_words_to_acoustics(raw_words, speech_islands=islands)
+    assert 5.90 <= snapped[1]["start_time"] <= 6.15
+    assert snapped[1]["end_time"] == 6.35
+
+
+def test_viterbi_two_line_broadcast_segmenter():
+    """Tests Stage 4 Viterbi DP 2-line broadcast segmentation and pause boundaries."""
+    from src.custom.subtitles.caption_aligner import segment_cues_viterbi
+
+    words = [
+        {"word": "I", "start_time": 28.50, "end_time": 28.70, "speaker": "Speaker 1"},
+        {"word": "remember", "start_time": 28.70, "end_time": 29.36, "speaker": "Speaker 1"},
+        {"word": "I", "start_time": 29.36, "end_time": 29.52, "speaker": "Speaker 1"},
+        {"word": "was", "start_time": 29.52, "end_time": 29.76, "speaker": "Speaker 1"},
+        {"word": "struck", "start_time": 29.76, "end_time": 30.02, "speaker": "Speaker 1"},
+        {"word": "by", "start_time": 30.02, "end_time": 30.16, "speaker": "Speaker 1"},
+        {"word": "the", "start_time": 30.16, "end_time": 30.30, "speaker": "Speaker 1"},
+        {"word": "harmony", "start_time": 30.30, "end_time": 30.65, "speaker": "Speaker 1"},
+        {"word": "of", "start_time": 30.65, "end_time": 30.78, "speaker": "Speaker 1"},
+        {"word": "color", "start_time": 30.78, "end_time": 30.92, "speaker": "Speaker 1"},
+        {"word": "in", "start_time": 30.92, "end_time": 31.10, "speaker": "Speaker 1"},
+        {"word": "the", "start_time": 31.10, "end_time": 31.30, "speaker": "Speaker 1"},
+        {"word": "forest.", "start_time": 31.30, "end_time": 32.28, "speaker": "Speaker 1"},
+        # 5.4s pause!
+        {"word": "I", "start_time": 55.00, "end_time": 55.20, "speaker": "Speaker 1"},
+        {"word": "was", "start_time": 55.20, "end_time": 55.48, "speaker": "Speaker 1"},
+        {"word": "keenly", "start_time": 55.48, "end_time": 55.80, "speaker": "Speaker 1"},
+        {"word": "aware", "start_time": 55.80, "end_time": 56.12, "speaker": "Speaker 1"},
+        {"word": "of", "start_time": 56.12, "end_time": 56.30, "speaker": "Speaker 1"},
+        {"word": "secret", "start_time": 56.30, "end_time": 56.75, "speaker": "Speaker 1"},
+        {"word": "movements", "start_time": 56.75, "end_time": 57.20, "speaker": "Speaker 1"},
+        {"word": "in", "start_time": 57.20, "end_time": 57.50, "speaker": "Speaker 1"},
+        {"word": "the", "start_time": 57.50, "end_time": 57.80, "speaker": "Speaker 1"},
+        {"word": "trees.", "start_time": 57.80, "end_time": 58.72, "speaker": "Speaker 1"},
+    ]
+
+    cues = segment_cues_viterbi(words, max_line_chars=42)
+    assert len(cues) == 2
+    for c in cues:
+        lines = c["text"].split("\n")
+        assert 1 <= len(lines) <= 2
+        assert all(len(ln) <= 42 for ln in lines)
+
+    # First cue ends around 32.28s (+ optional <=0.3s hold), NEVER bridging the pause to 55.0s!
+    assert cues[0]["end_time"] < 33.0
+    assert cues[1]["start_time"] == 55.0
+
+
+def test_plan_asr_audio_chunks_long_video():
+    """Verifies >14m audio is split at widest silence midpoints below Chirp 3's 20m limit."""
+    from src.custom.subtitles.caption_aligner import plan_asr_audio_chunks
+
+    islands = [(0.0, 690.0), (710.0, 1300.0)]  # 20s silence gap around 700s
+    chunks = plan_asr_audio_chunks(1320.0, islands, max_chunk_sec=840.0)
+    assert len(chunks) == 2
+    assert chunks[0] == (0.0, 700.0)
+    assert chunks[1] == (700.0, 1320.0)
+
+
+def test_controller_get_and_put_cues_with_reburn(api_client, tmp_path):
+    """Tests GET and PUT /api/v1/custom/subtitles/cues/{job_id} including reburn_video."""
+    from src.custom.subtitles.subtitle_controller import subtitle_service
+    from src.custom.subtitles.subtitle_dto import SubtitleCueDTO
+
+    job_id = "sub_cues_edit_test"
+    job_dir = tmp_path / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    src_mp4 = job_dir / "source_video.mp4"
+    src_mp4.write_bytes(b"fake_mp4_bytes")
+
+    job = SubtitleResponseDTO(
+        job_id=job_id,
+        status="completed",
+        step="completed",
+        progress=100,
+        local_output_dir=str(job_dir),
+        source_video_path=str(src_mp4),
+        burn_subtitles=True,
+        cues=[
+            SubtitleCueDTO(
+                index=1, start_time=1.0, end_time=3.0, text="Initial line"
+            )
+        ],
+    )
+    subtitle_service._save_job_state(job_id, job)
+
+    with patch.object(
+        subtitle_service, "get_artifact_signed_url", return_value=None
+    ):
+        get_res = api_client.get(f"/api/v1/custom/subtitles/cues/{job_id}")
+        assert get_res.status_code == 200
+        assert get_res.json()[0]["text"] == "Initial line"
+
+    with (
+        patch.object(
+            subtitle_service.engine,
+            "embed_soft_subtitles_ffmpeg",
+            side_effect=lambda v, s, out: open(out, "wb").write(b"soft") or out,
+        ),
+        patch.object(
+            subtitle_service.engine,
+            "burn_subtitles_ffmpeg",
+            side_effect=lambda v, s, out, **kw: open(out, "wb").write(b"burned") or out,
+        ),
+        patch.object(
+            subtitle_service,
+            "_upload_artifact_to_gcs",
+            return_value="gs://bucket/subtitles_outputs/sub_cues_edit_test/output_burned_in_new.mp4",
+        ),
+        patch.object(
+            subtitle_service,
+            "get_artifact_signed_url",
+            return_value="https://storage.googleapis.com/signed_new_burned.mp4",
+        ),
+    ):
+        put_res = api_client.put(
+            f"/api/v1/custom/subtitles/cues/{job_id}",
+            json={
+                "cues": [
+                    {
+                        "index": 1,
+                        "start_time": 1.0,
+                        "end_time": 3.0,
+                        "text": "Edited brand name\nsecond balanced line",
+                    }
+                ],
+                "reburn_video": True,
+            },
+        )
+        assert put_res.status_code == 200
+        payload = put_res.json()
+        assert payload["cues"][0]["text"] == "Edited brand name\nsecond balanced line"
+        assert payload["burned_in_video"] == "https://storage.googleapis.com/signed_new_burned.mp4"
+
+
+
 
 
 

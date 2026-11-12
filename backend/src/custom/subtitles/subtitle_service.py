@@ -46,7 +46,19 @@ from src.custom import (
     get_flash_model_candidates,
     record_working_flash_model,
 )
-from src.custom.subtitles.subtitle_dto import SubtitleResponseDTO
+from src.custom.subtitles.caption_aligner import (
+    align_words_to_acoustics,
+    detect_acoustic_speech_islands,
+    parse_vtt_cues,
+    plan_asr_audio_chunks,
+    segment_cues_viterbi,
+    slice_wav_segment,
+    strip_chirp_prompt_leaks,
+)
+from src.custom.subtitles.subtitle_dto import (
+    SubtitleCueDTO,
+    SubtitleResponseDTO,
+)
 from src.source_assets.schema.source_asset_model import (
     AssetScopeEnum,
     AssetTypeEnum,
@@ -161,248 +173,29 @@ class PodcastSubtitleEngine:
                     break
         return downloaded_file
 
-    _CHIRP_LANGUAGE_TOKENS = frozenset(
-        {
-            "english",
-            "spanish",
-            "french",
-            "german",
-            "japanese",
-            "portuguese",
-            "italian",
-            "chinese",
-            "mandarin",
-            "korean",
-            "hindi",
-            "arabic",
-            "russian",
-            "dutch",
-            "polish",
-            "turkish",
-            "vietnamese",
-            "thai",
-            "indonesian",
-        }
-    )
-
-    @staticmethod
-    def _norm_token(word: str) -> str:
-        return re.sub(r"[^a-z0-9]", "", (word or "").lower())
-
     @classmethod
     def _strip_chirp_prompt_leaks(
         cls, words_data: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Strips Chirp 3 system/diarization prompt leaks emitted during non-speech audio."""
-        if not words_data:
-            return []
-
-        # Drop literal special tokens occasionally emitted by Chirp 3
-        filtered = [
-            dict(w)
-            for w in words_data
-            if str(w.get("word", "")).strip() not in ("[BACKGROUND]", "{}")
-        ]
-        if not filtered:
-            return []
-
-        norms = [cls._norm_token(str(w.get("word", ""))) for w in filtered]
-        n = len(filtered)
-        remove_mask = [False] * n
-        reset_start_indices: set[int] = set()
-
-        diarization_fewshot = ["hello", "good", "morning", "how", "are", "you"]
-        diarization_intro = [
-            "an",
-            "example",
-            "transcript",
-            "with",
-            "speaker",
-            "annotation",
-            "is",
-            "as",
-            "follows",
-        ]
-
-        i = 0
-        while i < n:
-            # Signature 1: "Respond in the original language [of the speech[, <Lang>.]]"
-            if norms[i : i + 5] == [
-                "respond",
-                "in",
-                "the",
-                "original",
-                "language",
-            ]:
-                rm_start = i
-                rm_end = i + 5
-
-                # Check preceding synthetic diarization few-shot prefix ("Hello. Good morning. How are you?")
-                for k in range(len(diarization_fewshot), 1, -1):
-                    if (
-                        rm_start >= k
-                        and norms[rm_start - k : rm_start]
-                        == diarization_fewshot[-k:]
-                    ):
-                        rm_start -= k
-                        break
-
-                if (
-                    rm_start >= len(diarization_intro)
-                    and norms[rm_start - len(diarization_intro) : rm_start]
-                    == diarization_intro
-                ):
-                    rm_start -= len(diarization_intro)
-
-                # Check continuation "of the speech[, <Language>]"
-                if norms[rm_end : rm_end + 3] == ["of", "the", "speech"]:
-                    speech_raw = str(filtered[rm_end + 2].get("word", "")).strip()
-                    rm_end += 3
-                    if rm_end < n and (
-                        norms[rm_end] in cls._CHIRP_LANGUAGE_TOKENS
-                        or speech_raw.endswith(",")
-                    ):
-                        rm_end += 1
-
-                if norms[rm_end : rm_end + 8] == [
-                    "please",
-                    "directly",
-                    "output",
-                    "the",
-                    "final",
-                    "answer",
-                    "in",
-                    "json",
-                ]:
-                    rm_end += 8
-
-                for idx in range(rm_start, min(rm_end, n)):
-                    remove_mask[idx] = True
-                if rm_end < n:
-                    reset_start_indices.add(rm_end)
-                i = rm_end
-                continue
-
-            # Signature 2: "Transcribe the following speech segment"
-            if norms[i : i + 5] == [
-                "transcribe",
-                "the",
-                "following",
-                "speech",
-                "segment",
-            ]:
-                for idx in range(i, min(i + 5, n)):
-                    remove_mask[idx] = True
-                if i + 5 < n:
-                    reset_start_indices.add(i + 5)
-                i += 5
-                continue
-
-            i += 1
-
-        cleaned: List[Dict[str, Any]] = []
-        for idx, item in enumerate(filtered):
-            if remove_mask[idx]:
-                continue
-            if idx in reset_start_indices:
-                item["_reset_start"] = True
-            cleaned.append(item)
-        return cleaned
-
-    @staticmethod
-    def _est_word_duration(word: str) -> float:
-        clean = re.sub(
-            r"[^a-zA-Z0-9\u00C0-\u024F\u3040-\u30FF\u4E00-\u9FFF]",
-            "",
-            word or "",
-        )
-        n = max(1, len(clean))
-        return min(0.65, max(0.18, 0.065 * n + 0.12))
-
-    @staticmethod
-    def _max_word_duration(word: str) -> float:
-        clean = re.sub(
-            r"[^a-zA-Z0-9\u00C0-\u024F\u3040-\u30FF\u4E00-\u9FFF]",
-            "",
-            word or "",
-        )
-        n = max(1, len(clean))
-        return min(1.35, max(0.55, 0.11 * n + 0.25))
+        """Delegates Chirp 3 prompt-leak stripping to caption_aligner."""
+        return strip_chirp_prompt_leaks(words_data)
 
     @classmethod
     def _align_word_timestamps(
-        cls, words_data: List[Dict[str, Any]]
+        cls,
+        words_data: List[Dict[str, Any]],
+        speech_islands: Optional[List[tuple[float, float]]] = None,
     ) -> List[Dict[str, Any]]:
-        """Repairs Chirp 3 silence-absorbed start_offsets and missing/non-monotonic word offsets."""
-        if not words_data:
-            return []
-
-        aligned: List[Dict[str, Any]] = []
-        prev_end = 0.0
-        n = len(words_data)
-        i = 0
-
-        while i < n:
-            # Group consecutive words where intermediate end_time == 0.0
-            # (Chirp 3's response_parser only writes end_offset on words followed by a <ctrl> token).
-            j = i
-            while j < n - 1 and float(words_data[j].get("end_time", 0.0)) <= 0.0:
-                j += 1
-
-            group = [dict(w) for w in words_data[i : j + 1]]
-            reset_start = any(bool(w.pop("_reset_start", False)) for w in group)
-            raw_start = float(group[0].get("start_time", 0.0))
-            group_end = float(group[-1].get("end_time", 0.0))
-
-            est_durs = [
-                cls._est_word_duration(str(w.get("word", ""))) for w in group
-            ]
-            max_durs = [
-                cls._max_word_duration(str(w.get("word", ""))) for w in group
-            ]
-            sum_est = sum(est_durs)
-            sum_max = sum(max_durs)
-
-            if group_end <= 0.0 or group_end < prev_end:
-                group_start = prev_end
-                group_end = prev_end + sum_est
-            else:
-                effective_start = max(raw_start, prev_end)
-                if (
-                    reset_start
-                    or raw_start > group_end
-                    or (group_end - effective_start) > sum_max
-                ):
-                    group_start = max(prev_end, group_end - sum_est)
-                else:
-                    group_start = effective_start
-
-                if group_end <= group_start:
-                    group_end = group_start + max(0.12 * len(group), sum_est)
-
-            total_span = max(0.05, group_end - group_start)
-            curr_t = group_start
-            for k, w_item in enumerate(group):
-                frac = est_durs[k] / sum_est if sum_est > 0 else 1.0 / len(group)
-                w_end = (
-                    group_end
-                    if k == len(group) - 1
-                    else curr_t + total_span * frac
-                )
-                w_item["start_time"] = round(curr_t, 3)
-                w_item["end_time"] = round(w_end, 3)
-                aligned.append(w_item)
-                curr_t = w_end
-
-            prev_end = round(group_end, 3)
-            i = j + 1
-
-        return aligned
+        """Delegates acoustic onset snapping and pause-stretch clamping to caption_aligner."""
+        return align_words_to_acoustics(words_data, speech_islands=speech_islands)
 
     def parse_speech_response(
-        self, response: cloud_speech.BatchRecognizeResponse
+        self,
+        response: cloud_speech.BatchRecognizeResponse,
+        speech_islands: Optional[List[tuple[float, float]]] = None,
+        offset_sec: float = 0.0,
     ) -> Dict[str, Any]:
-        """Parses speech recognition results into word-level timestamps and transcript."""
+        """Parses speech recognition results into acoustically aligned word timestamps."""
         words_data: List[Dict[str, Any]] = []
         full_transcript_parts: List[str] = []
 
@@ -422,7 +215,6 @@ class PodcastSubtitleEngine:
                     continue
                 alt = result.alternatives[0]
                 if not alt.words and alt.transcript:
-                    # Check if a wordless alternative is pure prompt leak
                     lower_t = alt.transcript.lower()
                     if "respond in the original language" not in lower_t:
                         full_transcript_parts.append(alt.transcript.strip())
@@ -448,14 +240,19 @@ class PodcastSubtitleEngine:
                     words_data.append(
                         {
                             "word": w.word,
-                            "start_time": round(start_sec, 3),
-                            "end_time": round(end_sec, 3),
+                            "start_time": round(start_sec + offset_sec, 3),
+                            "end_time": (
+                                round(end_sec + offset_sec, 3)
+                                if end_sec > 0.0
+                                else 0.0
+                            ),
                             "speaker": f"Speaker {speaker_tag}",
                         }
                     )
 
-        words_data = self._strip_chirp_prompt_leaks(words_data)
-        words_data = self._align_word_timestamps(words_data)
+        words_data = align_words_to_acoustics(
+            words_data, speech_islands=speech_islands
+        )
         if words_data:
             full_text = " ".join(str(w["word"]) for w in words_data)
         else:
@@ -466,16 +263,103 @@ class PodcastSubtitleEngine:
             "words": words_data,
         }
 
+    def _run_chirp3_batch_on_gcs(
+        self,
+        gcs_uri: str,
+        language_code: str,
+        on_operation_started: Optional[Callable[[str], None]] = None,
+    ) -> cloud_speech.BatchRecognizeResponse:
+        """Executes a single Chirp 3 BatchRecognize call with built-in denoiser and auto-punctuation."""
+        config_kwargs: Dict[str, Any] = {
+            "auto_decoding_config": cloud_speech.AutoDetectDecodingConfig(),
+            "language_codes": [language_code],
+            "model": "chirp_3",
+            "features": cloud_speech.RecognitionFeatures(
+                enable_word_time_offsets=True,
+                enable_automatic_punctuation=True,
+                diarization_config=cloud_speech.SpeakerDiarizationConfig(
+                    min_speaker_count=1,
+                    max_speaker_count=4,
+                ),
+            ),
+        }
+        if hasattr(cloud_speech, "DenoiserConfig"):
+            config_kwargs["denoiser_config"] = cloud_speech.DenoiserConfig(
+                denoise_audio=True,
+                snr_threshold=0.0,
+            )
+
+        config = cloud_speech.RecognitionConfig(**config_kwargs)
+        file_metadata = cloud_speech.BatchRecognizeFileMetadata(uri=gcs_uri)
+        inline_output_config = cloud_speech.InlineOutputConfig()
+        request = cloud_speech.BatchRecognizeRequest(
+            recognizer=f"projects/{self.project_id}/locations/{self.region}/recognizers/_",
+            config=config,
+            files=[file_metadata],
+            recognition_output_config=cloud_speech.RecognitionOutputConfig(
+                inline_response_config=inline_output_config
+            ),
+        )
+
+        operation = None
+        for attempt in range(4):
+            try:
+                operation = self.speech_client.batch_recognize(request=request)
+                break
+            except Exception as e:
+                err_str = str(e).lower()
+                if (
+                    "429" in err_str
+                    or "resource_exhausted" in err_str
+                    or "quota" in err_str
+                    or "resource has been exhausted" in err_str
+                ) and attempt < 3:
+                    backoff = 2 * (attempt + 1)
+                    logger.warning(
+                        "Speech-to-Text batch_recognize quota limit hit (429). Retrying in %ss (attempt %s/3)...",
+                        backoff,
+                        attempt + 1,
+                    )
+                    time.sleep(backoff)
+                else:
+                    raise e
+
+        if not operation:
+            raise RuntimeError(
+                "Failed to initiate Speech-to-Text batch_recognize operation."
+            )
+
+        if hasattr(operation, "operation") and hasattr(
+            operation.operation, "name"
+        ):
+            op_name = operation.operation.name
+            logger.info("Chirp 3 BatchRecognize LRO: %s", op_name)
+            if on_operation_started:
+                on_operation_started(op_name)
+
+        start_wait = time.time()
+        while not operation.done():
+            time.sleep(1.5)
+            if time.time() - start_wait > 600:
+                raise TimeoutError(
+                    "Speech-to-Text v2 batch operation timed out after 10 minutes."
+                )
+
+        return operation.result()
+
     def transcribe_chirp3(
         self,
         audio_path_or_gcs_uri: str,
         language_code: str = "en-US",
         on_operation_started: Optional[Callable[[str], None]] = None,
     ) -> Dict[str, Any]:
-        """Transcribe audio using Speech-to-Text v2 chirp_3 model with diarization."""
+        """Runs Stage 1 Acoustic VAD + Stage 2 Chirp 3 ASR + Stage 3 Acoustic Onset Alignment."""
         gcs_uri = audio_path_or_gcs_uri
-        temp_wav_path = None
-        staged_blob = None
+        temp_wav_path: Optional[str] = None
+        chunk_temp_files: List[str] = []
+        staged_blobs: List[Any] = []
+        speech_islands: List[tuple[float, float]] = []
+        duration_sec = 0.0
 
         if not audio_path_or_gcs_uri.startswith("gs://"):
             if not os.path.exists(audio_path_or_gcs_uri):
@@ -485,7 +369,8 @@ class PodcastSubtitleEngine:
 
             temp_wav_path = f"{audio_path_or_gcs_uri}.stt_tmp.wav"
             logger.info(
-                f"Extracting 16kHz mono audio from {audio_path_or_gcs_uri}..."
+                "Extracting 16kHz mono audio from %s...",
+                audio_path_or_gcs_uri,
             )
             cmd = [
                 "ffmpeg",
@@ -502,104 +387,94 @@ class PodcastSubtitleEngine:
             ]
             subprocess.run(cmd, capture_output=True, check=True, timeout=300)
 
-            staged_blob = None
-            if self.storage_client:
-                bucket = self.storage_client.bucket(self.gcs_bucket_name)
-                filename = os.path.basename(temp_wav_path)
-                blob_name = f"staging/{int(time.time())}_{filename}"
-                staged_blob = bucket.blob(blob_name)
-                logger.info(
-                    f"Staging audio to GCS bucket gs://{self.gcs_bucket_name}/{blob_name}..."
-                )
-                staged_blob.upload_from_filename(temp_wav_path)
-                gcs_uri = f"gs://{self.gcs_bucket_name}/{blob_name}"
+            # Stage 1: Acoustic speech island detection (20ms vocal-band energy)
+            duration_sec, speech_islands = detect_acoustic_speech_islands(
+                temp_wav_path
+            )
 
         try:
-            logger.info(f"Running STT v2 chirp_3 on {gcs_uri}...")
+            if not self.speech_client:
+                return {"full_text": "", "words": []}
 
-            if self.speech_client:
-                config = cloud_speech.RecognitionConfig(
-                    auto_decoding_config=cloud_speech.AutoDetectDecodingConfig(),
-                    language_codes=[language_code],
-                    model="chirp_3",
-                    features=cloud_speech.RecognitionFeatures(
-                        enable_word_time_offsets=True,
-                        diarization_config=cloud_speech.SpeakerDiarizationConfig(
-                            min_speaker_count=1,
-                            max_speaker_count=4,
-                        ),
+            # Split >14m audio at silence gaps so Chirp 3 never hits its 20m word-offset limit
+            chunks = (
+                plan_asr_audio_chunks(
+                    duration_sec, speech_islands, max_chunk_sec=840.0
+                )
+                if temp_wav_path and duration_sec > 840.0
+                else [(0.0, duration_sec)]
+            )
+
+            if len(chunks) <= 1:
+                if temp_wav_path and self.storage_client:
+                    bucket = self.storage_client.bucket(self.gcs_bucket_name)
+                    filename = os.path.basename(temp_wav_path)
+                    blob_name = f"staging/{int(time.time())}_{filename}"
+                    staged_blob = bucket.blob(blob_name)
+                    staged_blob.upload_from_filename(temp_wav_path)
+                    staged_blobs.append(staged_blob)
+                    gcs_uri = f"gs://{self.gcs_bucket_name}/{blob_name}"
+
+                logger.info("Running STT v2 chirp_3 on %s...", gcs_uri)
+                response = self._run_chirp3_batch_on_gcs(
+                    gcs_uri=gcs_uri,
+                    language_code=language_code,
+                    on_operation_started=on_operation_started,
+                )
+                parsed = self.parse_speech_response(
+                    response, speech_islands=speech_islands
+                )
+                parsed["speech_islands"] = speech_islands
+                parsed["use_broadcast_segmenter"] = True
+                return parsed
+
+            # Multi-chunk path for long (>14m) videos
+            combined_words: List[Dict[str, Any]] = []
+            for idx, (c_start, c_end) in enumerate(chunks):
+                chunk_wav = f"{temp_wav_path}.chunk_{idx}.wav"
+                slice_wav_segment(temp_wav_path, chunk_wav, c_start, c_end)
+                chunk_temp_files.append(chunk_wav)
+
+                chunk_gcs = chunk_wav
+                if self.storage_client:
+                    bucket = self.storage_client.bucket(self.gcs_bucket_name)
+                    blob_name = f"staging/{int(time.time())}_{os.path.basename(chunk_wav)}"
+                    c_blob = bucket.blob(blob_name)
+                    c_blob.upload_from_filename(chunk_wav)
+                    staged_blobs.append(c_blob)
+                    chunk_gcs = f"gs://{self.gcs_bucket_name}/{blob_name}"
+
+                resp = self._run_chirp3_batch_on_gcs(
+                    gcs_uri=chunk_gcs,
+                    language_code=language_code,
+                    on_operation_started=(
+                        on_operation_started if idx == 0 else None
                     ),
                 )
-
-                file_metadata = cloud_speech.BatchRecognizeFileMetadata(
-                    uri=gcs_uri
+                chunk_parsed = self.parse_speech_response(
+                    resp, speech_islands=None, offset_sec=c_start
                 )
-                inline_output_config = cloud_speech.InlineOutputConfig()
+                combined_words.extend(chunk_parsed.get("words", []))
 
-                request = cloud_speech.BatchRecognizeRequest(
-                    recognizer=f"projects/{self.project_id}/locations/{self.region}/recognizers/_",
-                    config=config,
-                    files=[file_metadata],
-                    recognition_output_config=cloud_speech.RecognitionOutputConfig(
-                        inline_response_config=inline_output_config
-                    ),
-                )
-
-                operation = None
-                for attempt in range(4):
-                    try:
-                        operation = self.speech_client.batch_recognize(
-                            request=request
-                        )
-                        break
-                    except Exception as e:
-                        err_str = str(e).lower()
-                        if (
-                            "429" in err_str
-                            or "resource_exhausted" in err_str
-                            or "quota" in err_str
-                            or "resource has been exhausted" in err_str
-                        ) and attempt < 3:
-                            backoff = 2 * (attempt + 1)
-                            logger.warning(
-                                f"Speech-to-Text batch_recognize quota limit hit (429). Retrying in {backoff}s (attempt {attempt+1}/3)..."
-                            )
-                            time.sleep(backoff)
-                        else:
-                            raise e
-
-                if not operation:
-                    raise RuntimeError("Failed to initiate Speech-to-Text batch_recognize operation.")
-
-                if hasattr(operation, "operation") and hasattr(
-                    operation.operation, "name"
-                ):
-                    op_name = operation.operation.name
-                    logger.info("Chirp 3 BatchRecognize LRO: %s", op_name)
-                    if on_operation_started:
-                        on_operation_started(op_name)
-
-                start_wait = time.time()
-                while not operation.done():
-                    time.sleep(1.5)
-                    if time.time() - start_wait > 600:
-                        raise TimeoutError(
-                            "Speech-to-Text v2 batch operation timed out after 10 minutes."
-                        )
-
-                response = operation.result()
-                return self.parse_speech_response(response)
-
-            return {"full_text": "", "words": []}
+            aligned_words = align_words_to_acoustics(
+                combined_words, speech_islands=speech_islands
+            )
+            return {
+                "full_text": " ".join(str(w["word"]) for w in aligned_words),
+                "words": aligned_words,
+                "speech_islands": speech_islands,
+                "use_broadcast_segmenter": True,
+            }
         finally:
-            if temp_wav_path and os.path.exists(temp_wav_path):
+            for p in [temp_wav_path, *chunk_temp_files]:
+                if p and os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
+            for b in staged_blobs:
                 try:
-                    os.remove(temp_wav_path)
-                except Exception:
-                    pass
-            if staged_blob:
-                try:
-                    staged_blob.delete()
+                    b.delete()
                 except Exception:
                     pass
 
@@ -690,10 +565,14 @@ Word timing data:
     def refine_gemini36(
         self, raw_transcript_data: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
-        """Refines raw transcript words using sentence-aligned chunked Gemini calls."""
+        """Segments aligned transcript words into 2-line broadcast cues via Viterbi DP."""
         words_data = raw_transcript_data.get("words", [])
         if not words_data:
             return []
+
+        if raw_transcript_data.get("use_broadcast_segmenter"):
+            cues = segment_cues_viterbi(words_data, max_line_chars=42)
+            return self._sanitize_segments(cues)
 
         target_chunk_size = 350
         if len(words_data) <= target_chunk_size:
@@ -1231,6 +1110,25 @@ Word timing data:
         if progress_callback:
             progress_callback("completed", 100)
 
+        cues_list = [
+            SubtitleCueDTO(
+                index=idx + 1,
+                start_time=float(
+                    seg.get("start_time")
+                    if seg.get("start_time") is not None
+                    else seg.get("start", 0.0)
+                ),
+                end_time=float(
+                    seg.get("end_time")
+                    if seg.get("end_time") is not None
+                    else seg.get("end", 0.5)
+                ),
+                text=str(seg.get("text", "")).strip(),
+            )
+            for idx, seg in enumerate(refined_subtitles)
+            if str(seg.get("text", "")).strip()
+        ]
+
         return {
             "job_dir": job_dir,
             "source_video": video_path,
@@ -1242,6 +1140,7 @@ Word timing data:
             "transcript_json": transcript_json_path,
             "segment_count": len(refined_subtitles),
             "transcript_text": raw_asr.get("full_text", ""),
+            "cues": cues_list,
         }
 
     def generate_thumbnail(
@@ -1537,6 +1436,7 @@ class SubtitleService:
             job.burned_in_video = burned_gcs or burned_local
             job.segment_count = result.get("segment_count", 0)
             job.transcript_text = result.get("transcript_text", "")
+            job.cues = result.get("cues") or []
             job.local_output_dir = os.path.abspath(job_dir)
             job.processed_video_url = (
                 (burned_gcs or burned_local)
@@ -1618,6 +1518,7 @@ class SubtitleService:
                         resp = cloud_speech.BatchRecognizeResponse()
                         op_proto.response.Unpack(resp)
                         raw_asr = self.engine.parse_speech_response(resp)
+                        raw_asr["use_broadcast_segmenter"] = True
 
                         with self._jobs_lock:
                             should_start = (
@@ -1669,7 +1570,137 @@ class SubtitleService:
             elif signed_burned:
                 job.processed_video_url = signed_burned
 
+            if not job.cues:
+                try:
+                    vtt_file = self.get_artifact_file(job_id, "vtt")
+                    if vtt_file and os.path.exists(vtt_file):
+                        with open(vtt_file, "r", encoding="utf-8") as vf:
+                            parsed_cues = parse_vtt_cues(vf.read())
+                        if parsed_cues:
+                            job.cues = [
+                                SubtitleCueDTO(**c) for c in parsed_cues
+                            ]
+                except Exception as e:
+                    logger.debug("Lazy cue load skipped for %s: %s", job_id, e)
+
         return job
+
+    def update_job_cues(
+        self,
+        job_id: str,
+        cues: List[SubtitleCueDTO],
+        reburn_video: bool = False,
+    ) -> SubtitleResponseDTO:
+        """Persists user-edited cues to VTT/SRT sidecars and optionally re-burns the MP4."""
+        job = self._load_job_state(job_id)
+        if not job:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Job {job_id} not found.",
+            )
+
+        job_dir = (
+            job.local_output_dir
+            if job.local_output_dir and os.path.isdir(job.local_output_dir)
+            else self.resolve_output_dir(job_id=job_id)
+        )
+        os.makedirs(job_dir, exist_ok=True)
+
+        vtt_path = os.path.join(job_dir, "subtitles.vtt")
+        srt_path = os.path.join(job_dir, "subtitles.srt")
+
+        normalized_segments: List[Dict[str, Any]] = []
+        clean_cue_dtos: List[SubtitleCueDTO] = []
+        for idx, c in enumerate(cues):
+            text = (c.text or "").strip()
+            if not text:
+                continue
+            start_t = round(max(0.0, float(c.start_time)), 3)
+            end_t = round(max(start_t + 0.1, float(c.end_time)), 3)
+            normalized_segments.append(
+                {
+                    "start_time": start_t,
+                    "end_time": end_t,
+                    "text": text,
+                }
+            )
+            clean_cue_dtos.append(
+                SubtitleCueDTO(
+                    index=len(clean_cue_dtos) + 1,
+                    start_time=start_t,
+                    end_time=end_t,
+                    text=text,
+                )
+            )
+
+        self.engine.export_vtt_srt(normalized_segments, vtt_path, srt_path)
+
+        rev = int(time.time())
+        vtt_gcs = self._upload_artifact_to_gcs(
+            job_id, vtt_path, target_filename="subtitles.vtt"
+        )
+        srt_gcs = self._upload_artifact_to_gcs(
+            job_id, srt_path, target_filename="subtitles.srt"
+        )
+
+        source_local = self.get_artifact_file(job_id, "source_video")
+        if source_local and os.path.exists(source_local):
+            toggle_local = os.path.join(
+                job_dir, f"output_toggleable_{rev}.mp4"
+            )
+            try:
+                self.engine.embed_soft_subtitles_ffmpeg(
+                    source_local, vtt_path, toggle_local
+                )
+                toggle_gcs = self._upload_artifact_to_gcs(
+                    job_id,
+                    toggle_local,
+                    target_filename=f"output_toggleable_{rev}.mp4",
+                )
+                job.default_toggleable_video = toggle_gcs or toggle_local
+            except Exception as e:
+                logger.warning("Soft subtitle re-embed skipped: %s", e)
+
+            if reburn_video:
+                burned_local = os.path.join(
+                    job_dir, f"output_burned_in_{rev}.mp4"
+                )
+                style_preset = getattr(job, "style_preset", None) or "minimal"
+                if style_preset != "minimal":
+                    self.engine.burn_subtitles_ffmpeg(
+                        source_local,
+                        srt_path,
+                        burned_local,
+                        style_preset=style_preset,
+                    )
+                else:
+                    self.engine.burn_subtitles_ffmpeg(
+                        source_local, srt_path, burned_local
+                    )
+                burned_gcs = self._upload_artifact_to_gcs(
+                    job_id,
+                    burned_local,
+                    target_filename=f"output_burned_in_{rev}.mp4",
+                )
+                job.burned_in_video = burned_gcs or burned_local
+                job.burn_subtitles = True
+                job.processed_video_url = job.burned_in_video
+        elif reburn_video:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Source video is not available to re-burn MP4.",
+            )
+
+        job.subtitles_vtt = vtt_gcs or vtt_path
+        job.subtitle_url = vtt_gcs or vtt_path
+        job.subtitles_srt = srt_gcs or srt_path
+        job.cues = clean_cue_dtos
+        job.segment_count = len(clean_cue_dtos)
+        job.transcript_text = " ".join(
+            c.text.replace("\n", " ") for c in clean_cue_dtos
+        )
+        self._save_job_state(job_id, job)
+        return self.get_job_status(job_id) or job
 
     def resolve_output_dir(
         self, package_name: Optional[str] = None, job_id: str = ""
@@ -2272,6 +2303,7 @@ class SubtitleService:
             job.burned_in_video = burned_gcs or burned_local
             job.segment_count = result.get("segment_count", 0)
             job.transcript_text = result.get("transcript_text", "")
+            job.cues = result.get("cues") or []
             job.local_output_dir = os.path.abspath(job_dir)
             job.processed_video_url = (
                 (burned_gcs or burned_local)

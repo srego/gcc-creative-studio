@@ -37,6 +37,8 @@ from src.auth.auth_guard import RoleChecker, get_current_user
 from src.custom.subtitles.subtitle_dto import (
     SaveToGalleryRequestDTO,
     SaveToGalleryResponseDTO,
+    SubtitleCueDTO,
+    SubtitleCuesUpdateDTO,
     SubtitleRequestDTO,
     SubtitleResponseDTO,
     SubtitleUploadUrlRequestDTO,
@@ -291,6 +293,40 @@ def get_job_status(job_id: str) -> SubtitleResponseDTO:
             detail=f"Job {job_id} not found.",
         )
     return status_dto
+
+
+@router.get(
+    "/cues/{job_id}",
+    response_model=list[SubtitleCueDTO],
+    summary="Get Structured Subtitle Cues",
+)
+def get_job_cues(job_id: str) -> list[SubtitleCueDTO]:
+    """Retrieves structured timestamped subtitle cues for a completed job."""
+    status_dto = subtitle_service.get_job_status(job_id)
+    if not status_dto:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job {job_id} not found.",
+        )
+    return status_dto.cues or []
+
+
+@router.put(
+    "/cues/{job_id}",
+    response_model=SubtitleResponseDTO,
+    summary="Update Subtitle Cues and Optionally Re-Burn MP4",
+)
+async def update_job_cues(
+    job_id: str,
+    payload: SubtitleCuesUpdateDTO,
+) -> SubtitleResponseDTO:
+    """Saves user-edited subtitle cues to VTT/SRT and optionally re-burns the MP4 video."""
+    return await asyncio.to_thread(
+        subtitle_service.update_job_cues,
+        job_id=job_id,
+        cues=payload.cues,
+        reburn_video=payload.reburn_video,
+    )
 
 
 @router.get(

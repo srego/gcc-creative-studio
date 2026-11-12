@@ -20,6 +20,13 @@ import {Observable} from 'rxjs';
 import {catchError, switchMap} from 'rxjs/operators';
 import {environment} from '../../../environments/environment';
 
+export interface SubtitleCue {
+  index?: number;
+  start_time: number;
+  end_time: number;
+  text: string;
+}
+
 export interface SubtitleResponse {
   job_id: string;
   status: 'pending' | 'processing' | 'completed' | 'failed';
@@ -37,6 +44,7 @@ export interface SubtitleResponse {
   local_output_dir?: string;
   step?: string;
   progress?: number;
+  cues?: SubtitleCue[];
 }
 
 export interface SubtitleUploadUrlResponse {
@@ -187,6 +195,21 @@ export class SubtitlesService {
   ): Observable<Blob> {
     return this.http.get(this.getDownloadUrl(jobId, fileType), {
       responseType: 'blob',
+    });
+  }
+
+  getJobCues(jobId: string): Observable<SubtitleCue[]> {
+    return this.http.get<SubtitleCue[]>(`${this.baseUrl}/cues/${jobId}`);
+  }
+
+  updateJobCues(
+    jobId: string,
+    cues: SubtitleCue[],
+    reburnVideo = false,
+  ): Observable<SubtitleResponse> {
+    return this.http.put<SubtitleResponse>(`${this.baseUrl}/cues/${jobId}`, {
+      cues,
+      reburn_video: reburnVideo,
     });
   }
 

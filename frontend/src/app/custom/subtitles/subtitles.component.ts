@@ -41,7 +41,11 @@ import {Subscription, timer, of, throwError} from 'rxjs';
 import {switchMap, catchError} from 'rxjs/operators';
 import {ImageSelectorComponent} from '../../common/components/image-selector/image-selector.component';
 import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
-import {SubtitlesService, SubtitleResponse} from './subtitles.service';
+import {
+  SubtitlesService,
+  SubtitleCue,
+  SubtitleResponse,
+} from './subtitles.service';
 
 export type InputSourceTab = 'upload' | 'gallery' | 'url';
 export type SubtitleStep =
@@ -73,10 +77,12 @@ export type SubtitleStep =
 export class SubtitlesComponent implements OnInit, OnDestroy {
   private destroyRef = inject(DestroyRef);
 
-  @ViewChild('burnedVideoPlayer')
-  burnedVideoPlayerRef?: ElementRef<HTMLVideoElement>;
   @ViewChild('sourceVideoPlayer')
   sourceVideoPlayerRef?: ElementRef<HTMLVideoElement>;
+  @ViewChild('softVideoPlayer')
+  softVideoPlayerRef?: ElementRef<HTMLVideoElement>;
+  @ViewChild('burnedVideoPlayer')
+  burnedVideoPlayerRef?: ElementRef<HTMLVideoElement>;
 
   constructor(
     private dialog: MatDialog,
@@ -106,42 +112,55 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     'minimal',
   );
 
-  // Processing & Step Signals
+  // Processing & Video Preview Signals (Independent per Requested Output!)
   readonly isProcessing = signal<boolean>(false);
   readonly processingStep = signal<SubtitleStep>('idle');
   readonly progressPercentage = signal<number>(0);
   readonly isDraggingOver = signal<boolean>(false);
+
   readonly sourceVideoPreviewUrl = signal<string | null>(null);
-  readonly subtitledVideoPreviewUrl = signal<string | null>(null);
-  readonly previewVideoUrl = signal<string | null>(null);
-  readonly hasBurnedVideoOutput = signal<boolean>(false);
+  readonly softVideoPreviewUrl = signal<string | null>(null);
+  readonly burnedVideoPreviewUrl = signal<string | null>(null);
+  readonly showOriginalSourcePostRun = signal<boolean>(false);
+
+  // Interactive Cue List & Soft Overlay Signals
   readonly softCcEnabled = signal<boolean>(true);
-  readonly parsedVttCues = signal<
-    Array<{start: number; end: number; text: string}>
-  >([]);
+  readonly editableCues = signal<SubtitleCue[]>([]);
+  readonly activeCueIndex = signal<number>(-1);
   readonly activeCueText = signal<string>('');
+  readonly cuesDirty = signal<boolean>(false);
+  readonly isSavingCues = signal<boolean>(false);
+  readonly isReburningVideo = signal<boolean>(false);
+  readonly cueSaveMessage = signal<string | null>(null);
+
+  // Persistence & Download Signals
   readonly savedToGallery = signal<boolean>(false);
   readonly savedPackageName = signal<string>('');
   readonly localOutputDir = signal<string | null>(null);
   readonly activeJobId = signal<string | null>(null);
   readonly errorMessage = signal<string | null>(null);
+  readonly isSavingToGallery = signal<boolean>(false);
+  readonly savedAssetId = signal<number | null>(null);
+  readonly savedItemsCount = signal<number>(0);
+  readonly savedFilenames = signal<string[]>([]);
+  readonly isDownloadingFile = signal<string | null>(null);
 
   private pollSubscription?: Subscription;
 
   readonly statusDescription = computed(() => {
     switch (this.processingStep()) {
       case 'uploading':
-        return 'Uploading source media to server...';
+        return 'Uploading source media to Cloud Storage...';
       case 'extracting':
-        return 'Extracting high-fidelity audio stream...';
+        return 'Extracting 16kHz audio & detecting acoustic speech islands...';
       case 'transcribing':
-        return 'Transcribing speech with STT v2 chirp_3...';
+        return 'Transcribing speech with STT v2 chirp_3 (Denoiser + Auto-Punctuation)...';
       case 'formatting':
-        return 'Refining formatting with Gemini (<= 42 chars/line)...';
+        return 'Optimizing 2-line broadcast cues via Viterbi dynamic programming...';
       case 'packaging':
-        return 'Embedding tracks and exporting MP4/VTT/SRT...';
+        return 'Exporting WebVTT/SRT sidecars & rendering requested video streams...';
       case 'completed':
-        return 'Package generated successfully!';
+        return 'Subtitle package generated!';
       case 'failed':
         return 'Subtitle generation encountered an error.';
       default:
@@ -158,7 +177,6 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     {code: 'pt-BR', label: 'Portuguese (Brazil)'},
   ];
 
-  // Computed Signals
   readonly hasInput = computed(() => {
     if (this.activeTab() === 'upload') return !!this.selectedFile();
     if (this.activeTab() === 'gallery') return !!this.selectedGalleryAsset();
@@ -179,7 +197,8 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     } else if (this.selectedGalleryAsset()) {
       baseName = this.selectedGalleryAsset()!.title.replace(/\.[^/.]+$/, '');
     } else if (this.videoUrl().trim()) {
-      baseName = 'Web Video';
+      const cleaned = this.videoUrl().trim().split('/').pop() || 'Web Video';
+      baseName = cleaned.replace(/\.[^/.]+$/, '') || 'Web Video';
     }
     const langCode = this.sourceLanguage().split('-')[0].toUpperCase();
     return `${baseName} - Subtitles [${langCode}]`;
@@ -187,14 +206,6 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
 
   readonly currentPackageDisplayName = computed(() => {
     return this.packageName().trim() || this.suggestedPackageName();
-  });
-
-  readonly vttTrackUrl = computed(() => {
-    const jid = this.activeJobId();
-    if (jid && this.isComplete() && this.enableDynamicSubtitles()) {
-      return this.subtitlesService.getDownloadUrl(jid, 'vtt');
-    }
-    return null;
   });
 
   ngOnInit(): void {
@@ -208,8 +219,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
           params.get('package_name') || params.get('title') || '';
 
         if (videoUrl) {
-          this.sourceVideoPreviewUrl.set(videoUrl);
-          this.previewVideoUrl.set(videoUrl);
+          this.sourceVideoPreviewUrl.set(this.toBrowserPreviewUrl(videoUrl));
         }
         if (packageName) {
           this.packageName.set(packageName);
@@ -223,23 +233,27 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
             this.progressPercentage.set(100);
             this.isProcessing.set(false);
             this.enableBurnedInVideo.set(true);
-            this.subtitledVideoPreviewUrl.set(videoUrl);
+            this.burnedVideoPreviewUrl.set(videoUrl);
           }
           if (gcsUri) {
             this.activeTab.set('gallery');
             this.selectedGalleryAsset.set({
               id: 'gallery_source',
               title: packageName || 'Gallery Video',
-              url: videoUrl,
+              url: gcsUri,
+              previewUrl: videoUrl,
             });
           }
         } else if (gcsUri) {
           this.activeTab.set('gallery');
+          const preview = this.toBrowserPreviewUrl(gcsUri);
           this.selectedGalleryAsset.set({
             id: 'gallery_source',
             title: packageName || 'Gallery Video',
             url: gcsUri,
+            previewUrl: preview,
           });
+          this.sourceVideoPreviewUrl.set(preview);
         }
       });
   }
@@ -253,6 +267,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
         this.activeJobId.set(res.job_id);
         if (res.status === 'completed') {
           this.enableBurnedInVideo.set(Boolean(res.burned_in_video));
+          this.enableDynamicSubtitles.set(true);
           this.handleJobCompletion(res);
         } else if (res.status === 'failed') {
           this.handleJobFailure(
@@ -264,8 +279,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
         }
       },
       error: (err: HttpErrorResponse | Error | unknown) => {
-        // If the browser already has previewVideoUrl from route params, remain in completed preview state
-        if (this.previewVideoUrl()) {
+        if (this.burnedVideoPreviewUrl() || this.softVideoPreviewUrl()) {
           this.processingStep.set('completed');
           this.progressPercentage.set(100);
           this.isProcessing.set(false);
@@ -284,32 +298,23 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.stopPolling();
-    this.cleanupPreviewUrl();
+    this.cleanupPreviewUrls();
   }
 
-  private cleanupPreviewUrl(): void {
-    const currentSrc = this.sourceVideoPreviewUrl();
-    if (
-      isPlatformBrowser(this.platformId) &&
-      currentSrc &&
-      currentSrc.startsWith('blob:')
-    ) {
-      try {
-        window.URL.revokeObjectURL(currentSrc);
-      } catch (err) {
-        console.debug('Failed to revoke source object URL', err);
-      }
-    }
-    const currentSub = this.subtitledVideoPreviewUrl();
-    if (
-      isPlatformBrowser(this.platformId) &&
-      currentSub &&
-      currentSub.startsWith('blob:')
-    ) {
-      try {
-        window.URL.revokeObjectURL(currentSub);
-      } catch (err) {
-        console.debug('Failed to revoke subtitled object URL', err);
+  private cleanupPreviewUrls(): void {
+    if (!isPlatformBrowser(this.platformId)) return;
+    for (const sig of [
+      this.sourceVideoPreviewUrl,
+      this.softVideoPreviewUrl,
+      this.burnedVideoPreviewUrl,
+    ]) {
+      const val = sig();
+      if (val && val.startsWith('blob:')) {
+        try {
+          window.URL.revokeObjectURL(val);
+        } catch {
+          // ignore
+        }
       }
     }
   }
@@ -346,14 +351,14 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
         input.value = '';
         return;
       }
-      this.cleanupPreviewUrl();
+      this.cleanupPreviewUrls();
       this.selectedFile.set(file);
       const objUrl = isPlatformBrowser(this.platformId)
         ? window.URL.createObjectURL(file)
         : '';
       this.sourceVideoPreviewUrl.set(objUrl);
-      this.subtitledVideoPreviewUrl.set(null);
-      this.previewVideoUrl.set(objUrl);
+      this.softVideoPreviewUrl.set(null);
+      this.burnedVideoPreviewUrl.set(null);
       this.selectedGalleryAsset.set(null);
       this.videoUrl.set('');
       input.value = '';
@@ -504,13 +509,13 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     url: string;
     previewUrl?: string | null;
   }): void {
-    this.cleanupPreviewUrl();
+    this.cleanupPreviewUrls();
     const resolvedPreview =
       asset.previewUrl || this.toBrowserPreviewUrl(asset.url);
     this.selectedGalleryAsset.set(asset);
     this.sourceVideoPreviewUrl.set(resolvedPreview);
-    this.subtitledVideoPreviewUrl.set(null);
-    this.previewVideoUrl.set(resolvedPreview);
+    this.softVideoPreviewUrl.set(null);
+    this.burnedVideoPreviewUrl.set(null);
     this.selectedFile.set(null);
     this.videoUrl.set('');
   }
@@ -518,16 +523,15 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   onUrlChange(url: string): void {
     this.videoUrl.set(url);
     if (url.trim()) {
-      this.cleanupPreviewUrl();
+      this.cleanupPreviewUrls();
       this.selectedFile.set(null);
       this.selectedGalleryAsset.set(null);
       const browserUrl = this.toBrowserPreviewUrl(url);
       this.sourceVideoPreviewUrl.set(browserUrl);
-      this.subtitledVideoPreviewUrl.set(null);
-      this.previewVideoUrl.set(browserUrl);
+      this.softVideoPreviewUrl.set(null);
+      this.burnedVideoPreviewUrl.set(null);
     } else {
       this.sourceVideoPreviewUrl.set(null);
-      this.previewVideoUrl.set(null);
     }
   }
 
@@ -551,14 +555,14 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       if (!this.validateFileSize(file)) {
         return;
       }
-      this.cleanupPreviewUrl();
+      this.cleanupPreviewUrls();
       this.selectedFile.set(file);
       const objUrl = isPlatformBrowser(this.platformId)
         ? window.URL.createObjectURL(file)
         : '';
       this.sourceVideoPreviewUrl.set(objUrl);
-      this.subtitledVideoPreviewUrl.set(null);
-      this.previewVideoUrl.set(objUrl);
+      this.softVideoPreviewUrl.set(null);
+      this.burnedVideoPreviewUrl.set(null);
       this.selectedGalleryAsset.set(null);
       this.videoUrl.set('');
     }
@@ -570,6 +574,10 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
 
   toggleBurnedInVideo(): void {
     this.enableBurnedInVideo.update(val => !val);
+  }
+
+  toggleOriginalSourcePostRun(): void {
+    this.showOriginalSourcePostRun.update(val => !val);
   }
 
   setLanguage(lang: string): void {
@@ -586,18 +594,23 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
 
   resetStudio(): void {
     this.stopPolling();
-    this.cleanupPreviewUrl();
+    this.cleanupPreviewUrls();
     this.selectedFile.set(null);
     this.selectedGalleryAsset.set(null);
     this.videoUrl.set('');
     this.packageName.set('');
     this.sourceVideoPreviewUrl.set(null);
-    this.subtitledVideoPreviewUrl.set(null);
-    this.previewVideoUrl.set(null);
-    this.hasBurnedVideoOutput.set(false);
+    this.softVideoPreviewUrl.set(null);
+    this.burnedVideoPreviewUrl.set(null);
+    this.showOriginalSourcePostRun.set(false);
     this.softCcEnabled.set(true);
-    this.parsedVttCues.set([]);
+    this.editableCues.set([]);
+    this.activeCueIndex.set(-1);
     this.activeCueText.set('');
+    this.cuesDirty.set(false);
+    this.isSavingCues.set(false);
+    this.isReburningVideo.set(false);
+    this.cueSaveMessage.set(null);
     this.processingStep.set('idle');
     this.progressPercentage.set(0);
     this.isProcessing.set(false);
@@ -618,6 +631,8 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     this.progressPercentage.set(10);
     this.savedToGallery.set(false);
     this.errorMessage.set(null);
+    this.cuesDirty.set(false);
+    this.cueSaveMessage.set(null);
 
     const videoSource =
       this.activeTab() === 'gallery'
@@ -732,24 +747,148 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     this.softCcEnabled.update(val => !val);
   }
 
-  onOutputVideoTimeUpdate(event: Event): void {
-    const videoEl = event.target as HTMLVideoElement | null;
-    if (!videoEl || this.hasBurnedVideoOutput() || !this.softCcEnabled()) {
-      this.activeCueText.set('');
-      return;
+  formatTimestamp(sec: number): string {
+    const safe = Math.max(0, Number(sec) || 0);
+    const hrs = Math.floor(safe / 3600);
+    const mins = Math.floor((safe % 3600) / 60);
+    const secs = (safe % 60).toFixed(1).padStart(4, '0');
+    if (hrs > 0) {
+      return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${secs}`;
     }
+    return `${String(mins).padStart(2, '0')}:${secs}`;
+  }
+
+  maxLineLength(text: string): number {
+    if (!text) return 0;
+    return Math.max(...text.split('\n').map(l => l.length), 0);
+  }
+
+  trackByCueIndex(index: number): number {
+    return index;
+  }
+
+  seekToCue(cue: SubtitleCue, idx: number): void {
+    this.activeCueIndex.set(idx);
+    this.activeCueText.set(cue.text);
+    const player =
+      (this.enableDynamicSubtitles()
+        ? this.softVideoPlayerRef?.nativeElement
+        : null) || this.burnedVideoPlayerRef?.nativeElement;
+    if (player) {
+      player.currentTime = Math.max(0, cue.start_time + 0.03);
+      player.play().catch(() => {
+        // Autoplay policy if muted/uninteracted; seeking alone still updates frame
+      });
+    }
+  }
+
+  onCueTextChange(idx: number, newText: string): void {
+    const list = this.editableCues();
+    if (idx < 0 || idx >= list.length) return;
+    list[idx].text = newText;
+    this.cuesDirty.set(true);
+    this.cueSaveMessage.set(null);
+    if (this.activeCueIndex() === idx) {
+      this.activeCueText.set(newText);
+    }
+  }
+
+  saveCueEdits(reburnVideo = false): void {
+    const jobId = this.activeJobId();
+    if (!jobId || this.isSavingCues() || this.isReburningVideo()) return;
+
+    if (reburnVideo) {
+      this.isReburningVideo.set(true);
+    } else {
+      this.isSavingCues.set(true);
+    }
+    this.cueSaveMessage.set(null);
+    this.errorMessage.set(null);
+
+    this.subtitlesService
+      .updateJobCues(jobId, this.editableCues(), reburnVideo)
+      .subscribe({
+        next: (res: SubtitleResponse) => {
+          this.isSavingCues.set(false);
+          this.isReburningVideo.set(false);
+          this.cuesDirty.set(false);
+          if (res.cues && res.cues.length > 0) {
+            this.editableCues.set(res.cues.map(c => ({...c})));
+          }
+          if (
+            reburnVideo &&
+            res.burned_in_video &&
+            res.burned_in_video.startsWith('http')
+          ) {
+            this.burnedVideoPreviewUrl.set(res.burned_in_video);
+            setTimeout(() => {
+              this.burnedVideoPlayerRef?.nativeElement?.load();
+            }, 50);
+            this.cueSaveMessage.set(
+              'Saved caption edits and re-burned MP4 video!',
+            );
+          } else {
+            this.cueSaveMessage.set(
+              'Saved caption edits to .VTT and .SRT files!',
+            );
+          }
+        },
+        error: err => {
+          this.isSavingCues.set(false);
+          this.isReburningVideo.set(false);
+          const detail =
+            err && typeof err === 'object' && 'error' in err
+              ? (err as {error?: {detail?: string}}).error?.detail
+              : err instanceof Error
+                ? err.message
+                : 'Failed to save caption edits.';
+          this.errorMessage.set(detail || 'Failed to save caption edits.');
+        },
+      });
+  }
+
+  onSoftVideoTimeUpdate(event: Event): void {
+    const videoEl = event.target as HTMLVideoElement | null;
+    if (!videoEl) return;
     const t = videoEl.currentTime;
-    const cues = this.parsedVttCues();
-    for (const cue of cues) {
-      if (t >= cue.start && t <= cue.end) {
+    const cues = this.editableCues();
+    for (let i = 0; i < cues.length; i++) {
+      const cue = cues[i];
+      if (t >= cue.start_time && t <= cue.end_time) {
+        if (this.activeCueIndex() !== i) {
+          this.activeCueIndex.set(i);
+        }
         if (this.activeCueText() !== cue.text) {
           this.activeCueText.set(cue.text);
         }
         return;
       }
     }
+    if (this.activeCueIndex() !== -1) {
+      this.activeCueIndex.set(-1);
+    }
     if (this.activeCueText()) {
       this.activeCueText.set('');
+    }
+  }
+
+  onBurnedVideoTimeUpdate(event: Event): void {
+    // If only Burned-In Video was generated, still highlight the active cue in the editor!
+    if (this.enableDynamicSubtitles()) return;
+    const videoEl = event.target as HTMLVideoElement | null;
+    if (!videoEl) return;
+    const t = videoEl.currentTime;
+    const cues = this.editableCues();
+    for (let i = 0; i < cues.length; i++) {
+      if (t >= cues[i].start_time && t <= cues[i].end_time) {
+        if (this.activeCueIndex() !== i) {
+          this.activeCueIndex.set(i);
+        }
+        return;
+      }
+    }
+    if (this.activeCueIndex() !== -1) {
+      this.activeCueIndex.set(-1);
     }
   }
 
@@ -769,11 +908,10 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     return 0;
   }
 
-  private parseWebVtt(
-    vttContent: string,
-  ): Array<{start: number; end: number; text: string}> {
+  private parseWebVtt(vttContent: string): SubtitleCue[] {
     const blocks = vttContent.replace(/\r\n/g, '\n').split(/\n\s*\n/);
-    const cues: Array<{start: number; end: number; text: string}> = [];
+    const cues: SubtitleCue[] = [];
+    let idx = 1;
     for (const block of blocks) {
       const lines = block
         .split('\n')
@@ -784,28 +922,45 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       if (arrowLineIdx === -1) continue;
       const [rawStart, rawEndWithSettings] = lines[arrowLineIdx].split('-->');
       const rawEnd = (rawEndWithSettings || '').trim().split(/\s+/)[0];
-      const start = this.parseVttTime(rawStart);
-      const end = this.parseVttTime(rawEnd);
+      const start_time = this.parseVttTime(rawStart);
+      const end_time = this.parseVttTime(rawEnd);
       const text = lines.slice(arrowLineIdx + 1).join('\n').trim();
-      if (text && end >= start) {
-        cues.push({start, end, text});
+      if (text && end_time >= start_time) {
+        cues.push({index: idx++, start_time, end_time, text});
       }
     }
     return cues;
   }
 
-  private loadSoftSubtitleCues(jobId: string): void {
-    this.subtitlesService.downloadFile(jobId, 'vtt').subscribe({
-      next: async blob => {
-        try {
-          const text = await blob.text();
-          this.parsedVttCues.set(this.parseWebVtt(text));
-        } catch (e) {
-          console.warn('Failed to parse WebVTT cues for preview:', e);
+  private loadCuesFallback(jobId: string): void {
+    this.subtitlesService.getJobCues(jobId).subscribe({
+      next: cues => {
+        if (cues && cues.length > 0) {
+          this.editableCues.set(cues.map(c => ({...c})));
+          return;
         }
+        this.subtitlesService.downloadFile(jobId, 'vtt').subscribe({
+          next: async blob => {
+            try {
+              const text = await blob.text();
+              this.editableCues.set(this.parseWebVtt(text));
+            } catch (e) {
+              console.warn('Failed to parse WebVTT cues fallback:', e);
+            }
+          },
+        });
       },
-      error: err => {
-        console.warn('Could not load WebVTT cues for dynamic preview:', err);
+      error: () => {
+        this.subtitlesService.downloadFile(jobId, 'vtt').subscribe({
+          next: async blob => {
+            try {
+              const text = await blob.text();
+              this.editableCues.set(this.parseWebVtt(text));
+            } catch (e) {
+              console.warn('Failed to parse WebVTT cues fallback:', e);
+            }
+          },
+        });
       },
     });
   }
@@ -836,21 +991,29 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     this.progressPercentage.set(100);
     this.isProcessing.set(false);
     this.localOutputDir.set(res.local_output_dir || null);
+    this.activeCueIndex.set(-1);
+    this.activeCueText.set('');
+    this.cuesDirty.set(false);
 
     if (res.job_id) {
       this.activeJobId.set(res.job_id);
-      const burnedGenerated = Boolean(
-        res.burned_in_video && this.enableBurnedInVideo(),
-      );
-      this.hasBurnedVideoOutput.set(burnedGenerated);
-      this.activeCueText.set('');
 
-      // 1. Source Media Preview: always prefer the backend V4 presigned source_video_path
-      // unless the user already has a local File blob: URL loaded in memory.
+      // 1. Load structured timestamped cues for the Cue Editor & Soft Overlay
+      if (res.cues && res.cues.length > 0) {
+        this.editableCues.set(res.cues.map(c => ({...c})));
+      } else {
+        this.loadCuesFallback(res.job_id);
+      }
+
+      // 2. Original Source Video URL
       const existingSource = this.sourceVideoPreviewUrl();
+      const resolvedSourceHttp =
+        res.source_video_path && res.source_video_path.startsWith('http')
+          ? res.source_video_path
+          : null;
       if (!existingSource || !existingSource.startsWith('blob:')) {
-        if (res.source_video_path && res.source_video_path.startsWith('http')) {
-          this.sourceVideoPreviewUrl.set(res.source_video_path);
+        if (resolvedSourceHttp) {
+          this.sourceVideoPreviewUrl.set(resolvedSourceHttp);
         } else {
           this.fetchAuthenticatedVideoBlobUrl(
             res.job_id,
@@ -861,56 +1024,58 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
         }
       }
 
-      // 2. Output Preview: Burned-In MP4 when generated, or Dynamic Soft-Subtitle Preview otherwise
-      let streamUrl: string | null = null;
-      if (burnedGenerated) {
-        this.parsedVttCues.set([]);
-        if (res.burned_in_video && res.burned_in_video.startsWith('http')) {
-          streamUrl = res.burned_in_video;
-        } else if (
-          res.processed_video_url &&
-          res.processed_video_url.startsWith('http')
-        ) {
-          streamUrl = res.processed_video_url;
-        }
-      } else if (this.enableDynamicSubtitles()) {
+      // 3. Dynamic Subtitles Preview (Not Burned-In) — populated if requested!
+      if (this.enableDynamicSubtitles()) {
         this.softCcEnabled.set(true);
-        this.loadSoftSubtitleCues(res.job_id);
-        if (
-          res.default_toggleable_video &&
+        const softHttp =
+          (res.default_toggleable_video &&
           res.default_toggleable_video.startsWith('http')
-        ) {
-          streamUrl = res.default_toggleable_video;
-        } else if (
-          res.source_video_path &&
-          res.source_video_path.startsWith('http')
-        ) {
-          streamUrl = res.source_video_path;
-        } else if (existingSource && existingSource.startsWith('blob:')) {
-          streamUrl = existingSource;
+            ? res.default_toggleable_video
+            : null) ||
+          resolvedSourceHttp ||
+          (existingSource && existingSource.startsWith('blob:')
+            ? existingSource
+            : null);
+
+        if (softHttp) {
+          this.softVideoPreviewUrl.set(softHttp);
+        } else {
+          this.fetchAuthenticatedVideoBlobUrl(
+            res.job_id,
+            'toggleable_video',
+            this.softVideoPreviewUrl,
+            this.softVideoPlayerRef,
+          );
         }
+      } else {
+        this.softVideoPreviewUrl.set(null);
       }
 
-      if (streamUrl) {
-        this.subtitledVideoPreviewUrl.set(streamUrl);
-        this.previewVideoUrl.set(streamUrl);
-      } else if (burnedGenerated || this.enableDynamicSubtitles()) {
-        this.fetchAuthenticatedVideoBlobUrl(
-          res.job_id,
-          burnedGenerated ? 'burned_in_video' : 'toggleable_video',
-          this.subtitledVideoPreviewUrl,
-          this.burnedVideoPlayerRef,
-        );
+      // 4. Burned-In Subtitled Video Preview (Static MP4) — populated if requested!
+      if (this.enableBurnedInVideo()) {
+        const burnedHttp =
+          res.burned_in_video && res.burned_in_video.startsWith('http')
+            ? res.burned_in_video
+            : null;
+        if (burnedHttp) {
+          this.burnedVideoPreviewUrl.set(burnedHttp);
+        } else {
+          this.fetchAuthenticatedVideoBlobUrl(
+            res.job_id,
+            'burned_in_video',
+            this.burnedVideoPreviewUrl,
+            this.burnedVideoPlayerRef,
+          );
+        }
+      } else {
+        this.burnedVideoPreviewUrl.set(null);
       }
 
       setTimeout(() => {
         if (isPlatformBrowser(this.platformId)) {
-          if (this.burnedVideoPlayerRef?.nativeElement) {
-            this.burnedVideoPlayerRef.nativeElement.load();
-          }
-          if (this.sourceVideoPlayerRef?.nativeElement) {
-            this.sourceVideoPlayerRef.nativeElement.load();
-          }
+          this.softVideoPlayerRef?.nativeElement?.load();
+          this.burnedVideoPlayerRef?.nativeElement?.load();
+          this.sourceVideoPlayerRef?.nativeElement?.load();
         }
       }, 50);
     }
@@ -922,22 +1087,37 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     this.errorMessage.set(errorMsg);
   }
 
-  onBurnedVideoError(event: Event): void {
-    const currentUrl = this.subtitledVideoPreviewUrl();
+  onSoftVideoError(event: Event): void {
+    const currentUrl = this.softVideoPreviewUrl();
     const jid = this.activeJobId();
     if (jid && currentUrl && !currentUrl.startsWith('blob:')) {
       console.warn(
-        'Output video stream playback error, attempting authenticated blob fallback',
+        'Soft video stream error, attempting authenticated blob fallback',
         event,
       );
       this.fetchAuthenticatedVideoBlobUrl(
         jid,
-        this.hasBurnedVideoOutput() ? 'burned_in_video' : 'toggleable_video',
-        this.subtitledVideoPreviewUrl,
+        'toggleable_video',
+        this.softVideoPreviewUrl,
+        this.softVideoPlayerRef,
+      );
+    }
+  }
+
+  onBurnedVideoError(event: Event): void {
+    const currentUrl = this.burnedVideoPreviewUrl();
+    const jid = this.activeJobId();
+    if (jid && currentUrl && !currentUrl.startsWith('blob:')) {
+      console.warn(
+        'Burned video stream error, attempting authenticated blob fallback',
+        event,
+      );
+      this.fetchAuthenticatedVideoBlobUrl(
+        jid,
+        'burned_in_video',
+        this.burnedVideoPreviewUrl,
         this.burnedVideoPlayerRef,
       );
-    } else {
-      console.warn('Output video stream error event received:', event);
     }
   }
 
@@ -945,10 +1125,6 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     const currentUrl = this.sourceVideoPreviewUrl();
     const jid = this.activeJobId();
     if (jid && currentUrl && !currentUrl.startsWith('blob:')) {
-      console.warn(
-        'Source video stream playback error, attempting authenticated blob fallback',
-        event,
-      );
       this.fetchAuthenticatedVideoBlobUrl(
         jid,
         'source_video',
@@ -957,12 +1133,6 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       );
     }
   }
-
-  readonly isSavingToGallery = signal<boolean>(false);
-  readonly savedAssetId = signal<number | null>(null);
-  readonly savedItemsCount = signal<number>(0);
-  readonly savedFilenames = signal<string[]>([]);
-  readonly isDownloadingFile = signal<string | null>(null);
 
   private triggerBrowserDownload(blob: Blob, filename: string): void {
     const url = window.URL.createObjectURL(blob);
@@ -1014,7 +1184,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     });
   }
 
-  downloadVideo(): void {
+  downloadBurnedVideo(): void {
     const jobId = this.activeJobId();
     if (
       !jobId ||
@@ -1024,16 +1194,12 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       return;
 
     this.isDownloadingFile.set('video');
-    const fileType = this.enableBurnedInVideo()
-      ? 'burned_in_video'
-      : 'toggleable_video';
-    this.subtitlesService.downloadFile(jobId, fileType).subscribe({
+    this.subtitlesService.downloadFile(jobId, 'burned_in_video').subscribe({
       next: blob => {
         this.isDownloadingFile.set(null);
-        const suffix = this.enableBurnedInVideo() ? ' (Burned)' : '';
         this.triggerBrowserDownload(
           blob,
-          `${this.currentPackageDisplayName()}${suffix}.mp4`,
+          `${this.currentPackageDisplayName()} (Burned).mp4`,
         );
       },
       error: async err => {
