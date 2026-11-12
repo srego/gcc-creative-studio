@@ -126,11 +126,11 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   // Interactive Cue List & Soft Overlay Signals
   readonly softCcEnabled = signal<boolean>(true);
   readonly editableCues = signal<SubtitleCue[]>([]);
+  readonly savedCues = signal<SubtitleCue[]>([]);
   readonly originalAsrCueTexts = signal<string[]>([]);
   readonly baselineCueTexts = signal<string[]>([]);
   readonly modifiedCueCount = signal<number>(0);
   readonly editedFromOriginalCount = signal<number>(0);
-  readonly autoSyncState = signal<'initial' | 'syncing' | 'synced'>('initial');
   readonly sidecarRevision = signal<number>(1);
   readonly burnedRevision = signal<number>(1);
   readonly burnedNeedsReburn = signal<boolean>(false);
@@ -141,8 +141,6 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   readonly isSavingCues = signal<boolean>(false);
   readonly isReburningVideo = signal<boolean>(false);
   readonly cueSaveMessage = signal<string | null>(null);
-
-  private autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Persistence & Download Signals
   readonly savedToGallery = signal<boolean>(false);
@@ -309,15 +307,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.stopPolling();
-    this.clearAutoSaveTimer();
     this.cleanupPreviewUrls();
-  }
-
-  private clearAutoSaveTimer(): void {
-    if (this.autoSaveTimer !== null) {
-      clearTimeout(this.autoSaveTimer);
-      this.autoSaveTimer = null;
-    }
   }
 
   private cleanupPreviewUrls(): void {
@@ -622,14 +612,13 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     this.softVideoPreviewUrl.set(null);
     this.burnedVideoPreviewUrl.set(null);
     this.showOriginalSourcePostRun.set(false);
-    this.clearAutoSaveTimer();
     this.softCcEnabled.set(true);
     this.editableCues.set([]);
+    this.savedCues.set([]);
     this.originalAsrCueTexts.set([]);
     this.baselineCueTexts.set([]);
     this.modifiedCueCount.set(0);
     this.editedFromOriginalCount.set(0);
-    this.autoSyncState.set('initial');
     this.sidecarRevision.set(1);
     this.burnedRevision.set(1);
     this.burnedNeedsReburn.set(false);
@@ -814,6 +803,7 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   private setInitialCues(cues: SubtitleCue[], resetOriginalAsr = false): void {
     const cloned = cues.map(c => ({...c}));
     this.editableCues.set(cloned);
+    this.savedCues.set(cloned.map(c => ({...c})));
     this.baselineCueTexts.set(cloned.map(c => c.text));
     if (resetOriginalAsr || this.originalAsrCueTexts().length === 0) {
       this.originalAsrCueTexts.set(cloned.map(c => c.text));
@@ -824,11 +814,11 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
   }
 
   private recomputeCustomizedCount(): void {
-    const cues = this.editableCues();
+    const saved = this.savedCues();
     const orig = this.originalAsrCueTexts();
     let customCount = 0;
-    for (let i = 0; i < cues.length; i++) {
-      if ((cues[i]?.text ?? '') !== (orig[i] ?? '')) {
+    for (let i = 0; i < saved.length; i++) {
+      if ((saved[i]?.text ?? '') !== (orig[i] ?? '')) {
         customCount++;
       }
     }
@@ -846,7 +836,6 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     }
     this.modifiedCueCount.set(diffCount);
     this.cuesDirty.set(diffCount > 0);
-    this.recomputeCustomizedCount();
     if (diffCount > 0 && this.enableBurnedInVideo()) {
       this.burnedNeedsReburn.set(true);
     }
@@ -866,66 +855,58 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     return (cues[idx]?.text ?? '') !== (baseline[idx] ?? '');
   }
 
-  revertCue(idx: number, textareaEl?: HTMLTextAreaElement): void {
+  revertCue(idx: number): void {
     const cues = this.editableCues();
-    const orig = this.originalAsrCueTexts();
-    if (idx < 0 || idx >= cues.length || idx >= orig.length) return;
-    cues[idx].text = orig[idx];
-    if (textareaEl) {
-      textareaEl.value = orig[idx];
-    }
+    const baseline = this.baselineCueTexts();
+    if (idx < 0 || idx >= cues.length || idx >= baseline.length) return;
+    const updated = cues.slice();
+    updated[idx] = {...updated[idx], text: baseline[idx]};
+    this.editableCues.set(updated);
     if (this.activeCueIndex() === idx) {
-      this.activeCueText.set(orig[idx]);
+      this.activeCueText.set(baseline[idx]);
     }
     this.recomputeDirtyState();
-    this.scheduleAutoSave();
+  }
+
+  discardUnsavedEdits(): void {
+    const saved = this.savedCues();
+    this.editableCues.set(saved.map(c => ({...c})));
+    this.modifiedCueCount.set(0);
+    this.cuesDirty.set(false);
+    const idx = this.activeCueIndex();
+    if (idx >= 0 && idx < saved.length) {
+      this.activeCueText.set(saved[idx].text);
+    }
+    if (this.burnedRevision() === this.sidecarRevision()) {
+      this.burnedNeedsReburn.set(false);
+    }
   }
 
   onCueTextChange(idx: number, newText: string): void {
     const list = this.editableCues();
     if (idx < 0 || idx >= list.length) return;
-    list[idx].text = newText;
+    const updated = list.slice();
+    updated[idx] = {...updated[idx], text: newText};
+    this.editableCues.set(updated);
     this.cueSaveMessage.set(null);
     if (this.activeCueIndex() === idx) {
       this.activeCueText.set(newText);
     }
     this.recomputeDirtyState();
-    this.scheduleAutoSave();
-  }
-
-  private scheduleAutoSave(): void {
-    this.clearAutoSaveTimer();
-    if (!this.cuesDirty()) {
-      this.autoSyncState.set(
-        this.editedFromOriginalCount() > 0 ? 'synced' : 'initial',
-      );
-      return;
-    }
-    this.autoSyncState.set('syncing');
-    this.autoSaveTimer = setTimeout(() => {
-      this.autoSaveTimer = null;
-      if (this.cuesDirty()) {
-        this.saveCueEdits(false);
-      }
-    }, 650);
   }
 
   saveCueEdits(reburnVideo = false): void {
     const jobId = this.activeJobId();
-    if (!jobId || this.isReburningVideo()) return;
-    if (!reburnVideo && this.isSavingCues()) return;
+    if (!jobId || this.isSavingCues() || this.isReburningVideo()) return;
 
-    this.clearAutoSaveTimer();
     if (reburnVideo) {
       this.isReburningVideo.set(true);
     } else {
       this.isSavingCues.set(true);
-      this.autoSyncState.set('syncing');
     }
     this.cueSaveMessage.set(null);
     this.errorMessage.set(null);
 
-    // Snapshot the texts being sent so concurrent keystrokes aren't lost
     const snapshot = this.editableCues().map(c => ({...c}));
 
     this.subtitlesService
@@ -934,8 +915,11 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
         next: (res: SubtitleResponse) => {
           this.isSavingCues.set(false);
           this.isReburningVideo.set(false);
-          this.baselineCueTexts.set(snapshot.map(c => c.text));
-          this.recomputeDirtyState();
+          const committed =
+            res.cues && res.cues.length > 0
+              ? res.cues.map(c => ({...c}))
+              : snapshot;
+          this.setInitialCues(committed, false);
 
           this.sidecarRevision.update(v => v + 1);
           const nowStr = new Date().toLocaleTimeString([], {
@@ -944,17 +928,10 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
             second: '2-digit',
           });
           this.lastSavedAt.set(nowStr);
-          this.autoSyncState.set(
-            this.cuesDirty()
-              ? 'syncing'
-              : this.editedFromOriginalCount() > 0 || this.sidecarRevision() > 1
-                ? 'synced'
-                : 'initial',
-          );
 
           if (reburnVideo) {
-            this.burnedRevision.update(v => v + 1);
-            this.burnedNeedsReburn.set(this.cuesDirty());
+            this.burnedRevision.set(this.sidecarRevision());
+            this.burnedNeedsReburn.set(false);
             if (res.burned_in_video && res.burned_in_video.startsWith('http')) {
               this.burnedVideoPreviewUrl.set(res.burned_in_video);
               setTimeout(() => {
@@ -962,17 +939,15 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
               }, 50);
             }
             this.cueSaveMessage.set(
-              `Updated .VTT, .SRT & Burned-In MP4 (v${this.burnedRevision()} · ${nowStr})`,
+              `Saved changes to .VTT, .SRT & Burned-In MP4 (v${this.burnedRevision()} · ${nowStr})`,
             );
           } else {
+            if (this.enableBurnedInVideo()) {
+              this.burnedNeedsReburn.set(true);
+            }
             this.cueSaveMessage.set(
-              `Synced to both .VTT & .SRT (v${this.sidecarRevision()} · ${nowStr})`,
+              `Saved changes to both .VTT & .SRT files (v${this.sidecarRevision()} · ${nowStr})`,
             );
-          }
-
-          // If the user kept typing while the save was in flight, schedule another sync
-          if (this.cuesDirty()) {
-            this.scheduleAutoSave();
           }
         },
         error: err => {
@@ -983,8 +958,8 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
               ? (err as {error?: {detail?: string}}).error?.detail
               : err instanceof Error
                 ? err.message
-                : 'Failed to sync caption edits.';
-          this.errorMessage.set(detail || 'Failed to sync caption edits.');
+                : 'Failed to save caption edits.';
+          this.errorMessage.set(detail || 'Failed to save caption edits.');
         },
       });
   }
@@ -1143,7 +1118,6 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
       this.burnedRevision.set(1);
       this.burnedNeedsReburn.set(false);
       this.lastSavedAt.set(null);
-      this.autoSyncState.set('initial');
       this.originalAsrCueTexts.set([]);
 
       // 1. Load structured timestamped cues for the Cue Editor & Soft Overlay
@@ -1344,20 +1318,14 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     )
       return;
 
-    const currentCues = this.editableCues();
-    if (currentCues.length > 0) {
-      // Flush any pending unsaved keystrokes to Cloud Storage in the background
-      if (this.cuesDirty()) {
-        this.saveCueEdits(false);
-      }
-      // Build the .vtt or .srt directly from live cues so BOTH formats always reflect 100% of edits immediately!
-      const blob = this.serializeCuesForDownload(currentCues, type);
-      const isEdited =
-        this.editedFromOriginalCount() > 0 || this.sidecarRevision() > 1;
-      const suffix = isEdited ? ' (Edited)' : '';
+    const committedCues = this.savedCues();
+    if (committedCues.length > 0) {
+      const blob = this.serializeCuesForDownload(committedCues, type);
+      const revSuffix =
+        this.sidecarRevision() > 1 ? ` (v${this.sidecarRevision()})` : '';
       this.triggerBrowserDownload(
         blob,
-        `${this.currentPackageDisplayName()}${suffix}.${type}`,
+        `${this.currentPackageDisplayName()}${revSuffix}.${type}`,
       );
       return;
     }
@@ -1430,34 +1398,9 @@ export class SubtitlesComponent implements OnInit, OnDestroy {
     const workspaceId = rawWorkspaceId ? Number(rawWorkspaceId) : null;
 
     this.isSavingToGallery.set(true);
-    const saveObs = this.cuesDirty()
-      ? this.subtitlesService
-          .updateJobCues(jobId, this.editableCues(), false)
-          .pipe(
-            switchMap(res => {
-              const updatedList =
-                res.cues && res.cues.length > 0
-                  ? res.cues.map(c => ({...c}))
-                  : this.editableCues().map(c => ({...c}));
-              this.setInitialCues(updatedList);
-              this.sidecarRevision.update(v => v + 1);
-              this.lastSavedAt.set(
-                new Date().toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit',
-                }),
-              );
-              return this.subtitlesService.saveToGallery(
-                jobId,
-                workspaceId,
-                pkgName,
-              );
-            }),
-          )
-      : this.subtitlesService.saveToGallery(jobId, workspaceId, pkgName);
-
-    saveObs.subscribe({
+    this.subtitlesService
+      .saveToGallery(jobId, workspaceId, pkgName)
+      .subscribe({
       next: res => {
         this.isSavingToGallery.set(false);
         this.savedPackageName.set(res.asset_name || pkgName);
