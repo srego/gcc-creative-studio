@@ -2164,6 +2164,147 @@ def test_refine_chunk_gemini_429_retry():
         assert segments[0]["text"] == "Hello world"
 
 
+def _make_mock_word(word: str, start: float, end: float, speaker: str = "1"):
+    return MagicMock(
+        word=word,
+        start_offset=MagicMock(total_seconds=lambda s=start: s),
+        end_offset=MagicMock(total_seconds=lambda e=end: e),
+        speaker_label=speaker,
+    )
+
+
+def test_chirp3_prompt_leak_and_backward_timestamp_stripping():
+    """Verifies Chirp 3 diarization/system prompt leaks and poisoned timestamps are stripped."""
+    engine = PodcastSubtitleEngine()
+    leaked_and_real_words = [
+        _make_mock_word("Hello.", 1.64, 1.76, "1"),
+        _make_mock_word("Good", 1.84, 1.96, "2"),
+        _make_mock_word("morning.", 1.96, 2.12, "2"),
+        _make_mock_word("How", 2.20, 2.28, "1"),
+        _make_mock_word("are", 2.28, 2.34, "1"),
+        _make_mock_word("you?", 2.34, 2.40, "1"),
+        _make_mock_word("Respond", 2.48, 2.68, "1"),
+        _make_mock_word("in", 2.68, 2.76, "1"),
+        _make_mock_word("the", 2.76, 2.84, "1"),
+        _make_mock_word("original", 2.84, 3.12, "1"),
+        _make_mock_word("language", 3.12, 3.40, "1"),
+        _make_mock_word("of", 3.40, 3.52, "1"),
+        _make_mock_word("the", 3.52, 3.64, "1"),
+        _make_mock_word("speech,", 3.64, 3.92, "1"),
+        _make_mock_word("English.", 3.92, 37.64, "1"),
+        # Real opening words ("I remember") with poisoned start_offset from prompt leak
+        _make_mock_word("I", 37.72, 0.0, "1"),
+        _make_mock_word("remember", 37.72, 29.36, "1"),
+        _make_mock_word("I", 29.36, 29.52, "1"),
+        _make_mock_word("was", 29.52, 29.76, "1"),
+        _make_mock_word("struck", 29.76, 30.16, "1"),
+    ]
+    mock_resp = MagicMock(
+        results={
+            "gs://test/jane.wav": MagicMock(
+                error=MagicMock(code=0),
+                transcript=MagicMock(
+                    results=[
+                        MagicMock(
+                            alternatives=[
+                                MagicMock(
+                                    transcript="Hello. Good morning. How are you? Respond in the original language of the speech, English. I remember I was struck",
+                                    words=leaked_and_real_words,
+                                )
+                            ]
+                        )
+                    ]
+                ),
+            )
+        }
+    )
+
+    parsed = engine.parse_speech_response(mock_resp)
+    words = parsed["words"]
+    assert [w["word"] for w in words] == ["I", "remember", "I", "was", "struck"]
+    assert "Respond" not in parsed["full_text"]
+    assert "English." not in parsed["full_text"]
+    assert 28.3 <= words[0]["start_time"] <= 28.9
+    assert words[0]["start_time"] < words[0]["end_time"] <= words[1]["start_time"]
+    assert words[1]["end_time"] == 29.36
+
+
+def test_chirp3_real_greeting_preserved_without_prompt_leak():
+    """Ensures genuine spoken greetings are preserved when not followed by Chirp prompt leak."""
+    engine = PodcastSubtitleEngine()
+    real_words = [
+        _make_mock_word("Hello.", 0.2, 0.5, "1"),
+        _make_mock_word("Good", 0.6, 0.8, "2"),
+        _make_mock_word("morning.", 0.8, 1.2, "2"),
+        _make_mock_word("Welcome!", 1.3, 1.8, "1"),
+    ]
+    mock_resp = MagicMock(
+        results={
+            "gs://test/greet.wav": MagicMock(
+                error=MagicMock(code=0),
+                transcript=MagicMock(
+                    results=[
+                        MagicMock(
+                            alternatives=[
+                                MagicMock(
+                                    transcript="Hello. Good morning. Welcome!",
+                                    words=real_words,
+                                )
+                            ]
+                        )
+                    ]
+                ),
+            )
+        }
+    )
+    parsed = engine.parse_speech_response(mock_resp)
+    assert [w["word"] for w in parsed["words"]] == [
+        "Hello.",
+        "Good",
+        "morning.",
+        "Welcome!",
+    ]
+
+
+def test_chirp3_silence_absorbed_start_offset_clamped():
+    """Verifies silence gaps absorbed into post-pause word start_offset are clamped to voice onset."""
+    engine = PodcastSubtitleEngine()
+    words = [
+        _make_mock_word("winked.", 49.00, 49.60, "1"),
+        # 5.4s pause before "I was keenly aware" at ~55.0s
+        _make_mock_word("I", 49.64, 55.20, "1"),
+        _make_mock_word("was", 55.20, 55.48, "1"),
+        _make_mock_word("keenly", 55.48, 55.80, "1"),
+        _make_mock_word("aware", 55.80, 56.12, "1"),
+    ]
+    mock_resp = MagicMock(
+        results={
+            "gs://test/pause.wav": MagicMock(
+                error=MagicMock(code=0),
+                transcript=MagicMock(
+                    results=[
+                        MagicMock(
+                            alternatives=[
+                                MagicMock(
+                                    transcript="winked. I was keenly aware",
+                                    words=words,
+                                )
+                            ]
+                        )
+                    ]
+                ),
+            )
+        }
+    )
+    parsed = engine.parse_speech_response(mock_resp)
+    aligned = parsed["words"]
+    assert aligned[0]["end_time"] == 49.60
+    # "I" must NOT start at 49.64s (5.4s early); it must start right around 55.0s
+    assert 54.9 <= aligned[1]["start_time"] <= 55.1
+    assert aligned[1]["end_time"] == 55.20
+
+
+
 
 
 

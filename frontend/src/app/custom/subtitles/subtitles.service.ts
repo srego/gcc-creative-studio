@@ -177,7 +177,13 @@ export class SubtitlesService {
 
   downloadFile(
     jobId: string,
-    fileType: 'vtt' | 'srt' | 'toggleable_video' | 'burned_in_video' | 'zip',
+    fileType:
+      | 'vtt'
+      | 'srt'
+      | 'toggleable_video'
+      | 'burned_in_video'
+      | 'source_video'
+      | 'zip',
   ): Observable<Blob> {
     return this.http.get(this.getDownloadUrl(jobId, fileType), {
       responseType: 'blob',

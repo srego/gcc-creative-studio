@@ -111,6 +111,7 @@ variable "run_sa_project_roles" {
   description = "List of IAM roles to assign to the Cloud Run service account at the project level."
   default = [
     "roles/aiplatform.user",
+    "roles/speech.client",
     "roles/storage.objectAdmin",
     "roles/firebase.developAdmin",
     "roles/iam.serviceAccountTokenCreator",

@@ -26,6 +26,7 @@ variable "apis_to_enable" {
     "aiplatform.googleapis.com",
     "firestore.googleapis.com",
     "texttospeech.googleapis.com",
+    "speech.googleapis.com",            # Required for Closed Captioning (Chirp 3 STT v2)
     "workflows.googleapis.com",
     "drive.googleapis.com",
     "servicenetworking.googleapis.com", # Required for Private VPC Peering (Cloud SQL)

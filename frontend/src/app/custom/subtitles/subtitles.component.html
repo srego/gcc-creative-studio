@@ -14,7 +14,7 @@
  limitations under the License.
 -->
 
-<div class="min-h-screen p-6 md:p-10 text-neutral-100 flex flex-col gap-8 max-w-7xl mx-auto">
+<div class="min-h-screen pl-24 pr-6 pt-16 pb-10 md:pl-28 md:pr-10 md:pt-14 text-neutral-100 flex flex-col gap-8 max-w-7xl mx-auto">
   <!-- Page Header -->
   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
     <div class="flex items-center gap-4">
@@ -133,7 +133,7 @@
             class="flex-1 py-2.5 px-3 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-2"
           >
             <mat-icon class="text-base">link</mat-icon>
-            Web / YouTube URL
+            GCS / Video URL
           </button>
         </div>
 
@@ -211,7 +211,7 @@
           </div>
         </div>
 
-        <!-- Tab 3: Web / YouTube URL with Disclaimer Badge -->
+        <!-- Tab 3: GCS / Video URL with Guidance Badge -->
         <div *ngIf="activeTab() === 'url'" class="flex flex-col gap-3">
           <div class="relative">
             <mat-icon class="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400">link</mat-icon>
@@ -219,16 +219,16 @@
               type="text"
               [value]="videoUrl()"
               (input)="onUrlChange($any($event.target).value)"
-              placeholder="Paste YouTube or public video URL..."
+              placeholder="Paste gs://bucket/video.mp4 or direct .mp4 URL..."
               class="w-full bg-neutral-900/60 border border-neutral-700/70 rounded-xl pl-10 pr-4 py-3 text-sm text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
             />
           </div>
 
-          <!-- YouTube Disclaimer Badge -->
+          <!-- External Stream Guidance Badge -->
           <div class="p-3 rounded-xl bg-amber-950/30 border border-amber-500/20 flex items-start gap-2.5 text-amber-300/90 text-xs">
             <mat-icon class="text-amber-400 text-base mt-0.5">info</mat-icon>
             <p>
-              <strong>Note:</strong> External stream fetching depends on YouTube public accessibility. For maximum reliability, upload directly or select from your Media Gallery.
+              <strong>Note:</strong> Supports Cloud Storage URIs (<code>gs://...</code>) and direct video URLs (<code>.mp4</code>, <code>.mov</code>, <code>.webm</code>). YouTube links may be blocked on Cloud Run by bot checks—upload directly or select from Media Gallery for best reliability.
             </p>
           </div>
         </div>
@@ -397,19 +397,9 @@
                 controls
                 playsinline
                 preload="metadata"
-                crossorigin="anonymous"
                 (error)="onSourceVideoError($event)"
                 class="w-full h-full object-contain"
-              >
-                <track
-                  *ngIf="vttTrackUrl()"
-                  kind="subtitles"
-                  [src]="vttTrackUrl()"
-                  srclang="en"
-                  label="Subtitles"
-                  default
-                />
-              </video>
+              ></video>
 
               <div *ngIf="!sourceVideoPreviewUrl()" class="flex flex-col items-center justify-center gap-2 text-neutral-500 py-6">
                 <mat-icon class="text-4xl text-neutral-600">movie_creation</mat-icon>
@@ -419,19 +409,43 @@
             </div>
           </div>
 
-          <!-- Stack 2: Burned-In Subtitled Video (Revealed below Source when complete) -->
-          <div *ngIf="subtitledVideoPreviewUrl() || (isComplete() && enableBurnedInVideo())" class="flex flex-col gap-2">
+          <!-- Stack 2: Subtitled Output Preview (Adapts to Burned-In MP4 or Dynamic Soft Subtitles) -->
+          <div *ngIf="subtitledVideoPreviewUrl() || (isComplete() && (enableBurnedInVideo() || enableDynamicSubtitles()))" class="flex flex-col gap-2">
             <div class="flex items-center justify-between">
-              <span class="flex items-center gap-1.5 text-xs font-semibold text-purple-300">
-                <mat-icon class="text-purple-400 text-sm">subtitles</mat-icon>
-                Burned-In Subtitled Video
+              <span
+                class="flex items-center gap-1.5 text-xs font-semibold"
+                [ngClass]="hasBurnedVideoOutput() ? 'text-purple-300' : 'text-indigo-300'"
+              >
+                <mat-icon
+                  class="text-sm"
+                  [ngClass]="hasBurnedVideoOutput() ? 'text-purple-400' : 'text-indigo-400'"
+                >subtitles</mat-icon>
+                {{ hasBurnedVideoOutput() ? 'Burned-In Subtitled Video' : 'Dynamic Subtitles Preview' }}
               </span>
-              <span class="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/30 uppercase tracking-wider">
-                Output
-              </span>
+              <div class="flex items-center gap-2">
+                <button
+                  *ngIf="!hasBurnedVideoOutput() && enableDynamicSubtitles()"
+                  type="button"
+                  (click)="toggleSoftCc()"
+                  [ngClass]="softCcEnabled() ? 'bg-indigo-600/40 text-indigo-200 border-indigo-400/50' : 'bg-neutral-800 text-neutral-400 border-neutral-700'"
+                  class="px-2 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wider cursor-pointer transition-colors"
+                  title="Toggle soft captions overlay"
+                >
+                  {{ softCcEnabled() ? 'CC ON' : 'CC OFF' }}
+                </button>
+                <span
+                  class="px-2 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wider"
+                  [ngClass]="hasBurnedVideoOutput() ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' : 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'"
+                >
+                  {{ hasBurnedVideoOutput() ? 'Burned-In MP4' : 'Soft .VTT' }}
+                </span>
+              </div>
             </div>
 
-            <div class="aspect-video w-full bg-neutral-950 rounded-xl overflow-hidden border border-purple-500/30 relative flex items-center justify-center shadow-lg shadow-purple-950/30 group">
+            <div
+              class="aspect-video w-full bg-neutral-950 rounded-xl overflow-hidden border relative flex items-center justify-center shadow-lg group"
+              [ngClass]="hasBurnedVideoOutput() ? 'border-purple-500/30 shadow-purple-950/30' : 'border-indigo-500/30 shadow-indigo-950/30'"
+            >
               <video
                 #burnedVideoPlayer
                 *ngIf="subtitledVideoPreviewUrl()"
@@ -439,17 +453,24 @@
                 controls
                 playsinline
                 preload="auto"
+                (timeupdate)="onOutputVideoTimeUpdate($event)"
+                (seeked)="onOutputVideoTimeUpdate($event)"
+                (loadedmetadata)="onOutputVideoTimeUpdate($event)"
                 (error)="onBurnedVideoError($event)"
                 class="w-full h-full object-contain"
               ></video>
               <div *ngIf="!subtitledVideoPreviewUrl()" class="flex flex-col items-center justify-center gap-1.5 text-neutral-500">
                 <mat-icon class="text-3xl text-neutral-600 animate-pulse">movie</mat-icon>
-                <p class="text-xs">Processing burned-in subtitle stream...</p>
+                <p class="text-xs">Preparing subtitled preview stream...</p>
               </div>
 
-              <div *ngIf="subtitledVideoPreviewUrl()" class="absolute bottom-12 inset-x-4 text-center pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
-                <span class="bg-black/80 text-white font-medium px-4 py-1.5 rounded-md text-xs border border-white/10 backdrop-blur-md inline-block shadow-lg">
-                  [{{ currentPackageDisplayName() }}]
+              <!-- Synchronized Soft-Subtitle Overlay when user generates Dynamic Subtitles without Burned-In MP4 -->
+              <div
+                *ngIf="!hasBurnedVideoOutput() && softCcEnabled() && activeCueText()"
+                class="absolute bottom-11 inset-x-4 text-center pointer-events-none z-10"
+              >
+                <span class="bg-black/85 text-white font-medium px-3.5 py-1.5 rounded-lg text-xs sm:text-sm leading-snug border border-white/10 inline-block shadow-lg whitespace-pre-line max-w-[92%]">
+                  {{ activeCueText() }}
                 </span>
               </div>
             </div>

@@ -161,6 +161,244 @@ class PodcastSubtitleEngine:
                     break
         return downloaded_file
 
+    _CHIRP_LANGUAGE_TOKENS = frozenset(
+        {
+            "english",
+            "spanish",
+            "french",
+            "german",
+            "japanese",
+            "portuguese",
+            "italian",
+            "chinese",
+            "mandarin",
+            "korean",
+            "hindi",
+            "arabic",
+            "russian",
+            "dutch",
+            "polish",
+            "turkish",
+            "vietnamese",
+            "thai",
+            "indonesian",
+        }
+    )
+
+    @staticmethod
+    def _norm_token(word: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", (word or "").lower())
+
+    @classmethod
+    def _strip_chirp_prompt_leaks(
+        cls, words_data: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Strips Chirp 3 system/diarization prompt leaks emitted during non-speech audio."""
+        if not words_data:
+            return []
+
+        # Drop literal special tokens occasionally emitted by Chirp 3
+        filtered = [
+            dict(w)
+            for w in words_data
+            if str(w.get("word", "")).strip() not in ("[BACKGROUND]", "{}")
+        ]
+        if not filtered:
+            return []
+
+        norms = [cls._norm_token(str(w.get("word", ""))) for w in filtered]
+        n = len(filtered)
+        remove_mask = [False] * n
+        reset_start_indices: set[int] = set()
+
+        diarization_fewshot = ["hello", "good", "morning", "how", "are", "you"]
+        diarization_intro = [
+            "an",
+            "example",
+            "transcript",
+            "with",
+            "speaker",
+            "annotation",
+            "is",
+            "as",
+            "follows",
+        ]
+
+        i = 0
+        while i < n:
+            # Signature 1: "Respond in the original language [of the speech[, <Lang>.]]"
+            if norms[i : i + 5] == [
+                "respond",
+                "in",
+                "the",
+                "original",
+                "language",
+            ]:
+                rm_start = i
+                rm_end = i + 5
+
+                # Check preceding synthetic diarization few-shot prefix ("Hello. Good morning. How are you?")
+                for k in range(len(diarization_fewshot), 1, -1):
+                    if (
+                        rm_start >= k
+                        and norms[rm_start - k : rm_start]
+                        == diarization_fewshot[-k:]
+                    ):
+                        rm_start -= k
+                        break
+
+                if (
+                    rm_start >= len(diarization_intro)
+                    and norms[rm_start - len(diarization_intro) : rm_start]
+                    == diarization_intro
+                ):
+                    rm_start -= len(diarization_intro)
+
+                # Check continuation "of the speech[, <Language>]"
+                if norms[rm_end : rm_end + 3] == ["of", "the", "speech"]:
+                    speech_raw = str(filtered[rm_end + 2].get("word", "")).strip()
+                    rm_end += 3
+                    if rm_end < n and (
+                        norms[rm_end] in cls._CHIRP_LANGUAGE_TOKENS
+                        or speech_raw.endswith(",")
+                    ):
+                        rm_end += 1
+
+                if norms[rm_end : rm_end + 8] == [
+                    "please",
+                    "directly",
+                    "output",
+                    "the",
+                    "final",
+                    "answer",
+                    "in",
+                    "json",
+                ]:
+                    rm_end += 8
+
+                for idx in range(rm_start, min(rm_end, n)):
+                    remove_mask[idx] = True
+                if rm_end < n:
+                    reset_start_indices.add(rm_end)
+                i = rm_end
+                continue
+
+            # Signature 2: "Transcribe the following speech segment"
+            if norms[i : i + 5] == [
+                "transcribe",
+                "the",
+                "following",
+                "speech",
+                "segment",
+            ]:
+                for idx in range(i, min(i + 5, n)):
+                    remove_mask[idx] = True
+                if i + 5 < n:
+                    reset_start_indices.add(i + 5)
+                i += 5
+                continue
+
+            i += 1
+
+        cleaned: List[Dict[str, Any]] = []
+        for idx, item in enumerate(filtered):
+            if remove_mask[idx]:
+                continue
+            if idx in reset_start_indices:
+                item["_reset_start"] = True
+            cleaned.append(item)
+        return cleaned
+
+    @staticmethod
+    def _est_word_duration(word: str) -> float:
+        clean = re.sub(
+            r"[^a-zA-Z0-9\u00C0-\u024F\u3040-\u30FF\u4E00-\u9FFF]",
+            "",
+            word or "",
+        )
+        n = max(1, len(clean))
+        return min(0.65, max(0.18, 0.065 * n + 0.12))
+
+    @staticmethod
+    def _max_word_duration(word: str) -> float:
+        clean = re.sub(
+            r"[^a-zA-Z0-9\u00C0-\u024F\u3040-\u30FF\u4E00-\u9FFF]",
+            "",
+            word or "",
+        )
+        n = max(1, len(clean))
+        return min(1.35, max(0.55, 0.11 * n + 0.25))
+
+    @classmethod
+    def _align_word_timestamps(
+        cls, words_data: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Repairs Chirp 3 silence-absorbed start_offsets and missing/non-monotonic word offsets."""
+        if not words_data:
+            return []
+
+        aligned: List[Dict[str, Any]] = []
+        prev_end = 0.0
+        n = len(words_data)
+        i = 0
+
+        while i < n:
+            # Group consecutive words where intermediate end_time == 0.0
+            # (Chirp 3's response_parser only writes end_offset on words followed by a <ctrl> token).
+            j = i
+            while j < n - 1 and float(words_data[j].get("end_time", 0.0)) <= 0.0:
+                j += 1
+
+            group = [dict(w) for w in words_data[i : j + 1]]
+            reset_start = any(bool(w.pop("_reset_start", False)) for w in group)
+            raw_start = float(group[0].get("start_time", 0.0))
+            group_end = float(group[-1].get("end_time", 0.0))
+
+            est_durs = [
+                cls._est_word_duration(str(w.get("word", ""))) for w in group
+            ]
+            max_durs = [
+                cls._max_word_duration(str(w.get("word", ""))) for w in group
+            ]
+            sum_est = sum(est_durs)
+            sum_max = sum(max_durs)
+
+            if group_end <= 0.0 or group_end < prev_end:
+                group_start = prev_end
+                group_end = prev_end + sum_est
+            else:
+                effective_start = max(raw_start, prev_end)
+                if (
+                    reset_start
+                    or raw_start > group_end
+                    or (group_end - effective_start) > sum_max
+                ):
+                    group_start = max(prev_end, group_end - sum_est)
+                else:
+                    group_start = effective_start
+
+                if group_end <= group_start:
+                    group_end = group_start + max(0.12 * len(group), sum_est)
+
+            total_span = max(0.05, group_end - group_start)
+            curr_t = group_start
+            for k, w_item in enumerate(group):
+                frac = est_durs[k] / sum_est if sum_est > 0 else 1.0 / len(group)
+                w_end = (
+                    group_end
+                    if k == len(group) - 1
+                    else curr_t + total_span * frac
+                )
+                w_item["start_time"] = round(curr_t, 3)
+                w_item["end_time"] = round(w_end, 3)
+                aligned.append(w_item)
+                curr_t = w_end
+
+            prev_end = round(group_end, 3)
+            i = j + 1
+
+        return aligned
+
     def parse_speech_response(
         self, response: cloud_speech.BatchRecognizeResponse
     ) -> Dict[str, Any]:
@@ -183,7 +421,12 @@ class PodcastSubtitleEngine:
                 if not result.alternatives:
                     continue
                 alt = result.alternatives[0]
-                full_transcript_parts.append(alt.transcript)
+                if not alt.words and alt.transcript:
+                    # Check if a wordless alternative is pure prompt leak
+                    lower_t = alt.transcript.lower()
+                    if "respond in the original language" not in lower_t:
+                        full_transcript_parts.append(alt.transcript.strip())
+                    continue
                 for w in alt.words:
                     start_sec = (
                         w.start_offset.total_seconds()
@@ -211,8 +454,15 @@ class PodcastSubtitleEngine:
                         }
                     )
 
+        words_data = self._strip_chirp_prompt_leaks(words_data)
+        words_data = self._align_word_timestamps(words_data)
+        if words_data:
+            full_text = " ".join(str(w["word"]) for w in words_data)
+        else:
+            full_text = " ".join(full_transcript_parts)
+
         return {
-            "full_text": " ".join(full_transcript_parts),
+            "full_text": full_text,
             "words": words_data,
         }
 
@@ -474,7 +724,51 @@ Word timing data:
                 for chunk_segs in results:
                     segments.extend(chunk_segs)
 
-        return self._enforce_max_char_limit(segments, max_chars=42)
+        return self._sanitize_segments(
+            self._enforce_max_char_limit(segments, max_chars=42)
+        )
+
+    @staticmethod
+    def _sanitize_segments(
+        segments: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Ensures subtitle cues are monotonic, non-overlapping, and free of prompt leaks."""
+        sanitized: List[Dict[str, Any]] = []
+        prev_end = 0.0
+        for seg in segments:
+            text = str(seg.get("text", "")).strip()
+            if not text:
+                continue
+            lower_text = text.lower()
+            if "respond in the original language" in lower_text:
+                continue
+
+            start_t = float(seg.get("start_time", 0.0) or 0.0)
+            end_t = float(seg.get("end_time", 0.0) or 0.0)
+            est_dur = max(0.45, min(3.5, len(text) * 0.065))
+
+            if end_t <= 0.0 or end_t < prev_end:
+                start_t = prev_end
+                end_t = prev_end + est_dur
+            elif start_t > end_t:
+                start_t = max(prev_end, end_t - est_dur)
+            elif start_t < prev_end:
+                start_t = prev_end
+
+            if end_t <= start_t:
+                end_t = start_t + max(0.35, est_dur)
+
+            sanitized.append(
+                {
+                    "speaker": seg.get("speaker", "Speaker 1"),
+                    "start_time": round(start_t, 3),
+                    "end_time": round(end_t, 3),
+                    "text": text,
+                }
+            )
+            prev_end = round(end_t, 3)
+
+        return sanitized
 
     def _enforce_max_char_limit(
         self, segments: List[Dict[str, Any]], max_chars: int = 42
@@ -548,6 +842,7 @@ Word timing data:
         curr_len = 0
         curr_speaker = words_data[0].get("speaker", "Speaker 1")
         start_time = words_data[0].get("start_time", 0.0)
+        prev_end_time = words_data[0].get("end_time", start_time + 0.5)
 
         for item in words_data:
             w = item["word"]
@@ -558,9 +853,10 @@ Word timing data:
             ):
                 curr_words.append(w)
                 curr_len += word_len
+                prev_end_time = item.get("end_time", prev_end_time)
             else:
                 if curr_words:
-                    end_time = item["start_time"]
+                    end_time = max(prev_end_time, start_time + 0.2)
                     segments.append(
                         {
                             "speaker": curr_speaker,
@@ -573,6 +869,7 @@ Word timing data:
                 curr_len = len(w)
                 curr_speaker = item.get("speaker", "Speaker 1")
                 start_time = item["start_time"]
+                prev_end_time = item.get("end_time", start_time + 0.5)
 
         if curr_words and words_data:
             segments.append(
@@ -1202,7 +1499,28 @@ class SubtitleService:
             self._upload_artifact_to_gcs(job_id, thumb_local)
 
             source_gcs = None
-            if video_path and video_path.startswith("gs://"):
+            local_source = result.get("source_video")
+            own_bucket_name = (
+                getattr(config_service, "GENMEDIA_BUCKET", None)
+                or os.getenv("GENMEDIA_BUCKET")
+                or self.engine.gcs_bucket_name
+            )
+            own_bucket_prefix = f"gs://{own_bucket_name}/"
+            if video_path and video_path.startswith(own_bucket_prefix):
+                source_gcs = video_path
+            elif (
+                local_source
+                and not str(local_source).startswith("gs://")
+                and os.path.exists(str(local_source))
+            ):
+                source_gcs = self._upload_artifact_to_gcs(
+                    job_id, str(local_source), target_filename="source_video.mp4"
+                ) or (
+                    video_path
+                    if video_path and video_path.startswith("gs://")
+                    else None
+                )
+            elif video_path and video_path.startswith("gs://"):
                 source_gcs = video_path
             elif video_path and os.path.exists(video_path):
                 source_gcs = self._upload_artifact_to_gcs(
@@ -1912,7 +2230,28 @@ class SubtitleService:
             self._upload_artifact_to_gcs(job_id, thumb_local)
 
             source_gcs = None
-            if video_path and video_path.startswith("gs://"):
+            local_source = result.get("source_video")
+            own_bucket_name = (
+                getattr(config_service, "GENMEDIA_BUCKET", None)
+                or os.getenv("GENMEDIA_BUCKET")
+                or self.engine.gcs_bucket_name
+            )
+            own_bucket_prefix = f"gs://{own_bucket_name}/"
+            if video_path and video_path.startswith(own_bucket_prefix):
+                source_gcs = video_path
+            elif (
+                local_source
+                and not str(local_source).startswith("gs://")
+                and os.path.exists(str(local_source))
+            ):
+                source_gcs = self._upload_artifact_to_gcs(
+                    job_id, str(local_source), target_filename="source_video.mp4"
+                ) or (
+                    video_path
+                    if video_path and video_path.startswith("gs://")
+                    else None
+                )
+            elif video_path and video_path.startswith("gs://"):
                 source_gcs = video_path
             elif video_path and os.path.exists(video_path):
                 source_gcs = self._upload_artifact_to_gcs(
