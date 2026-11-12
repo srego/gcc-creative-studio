@@ -1541,15 +1541,23 @@ class SubtitleService:
                     logger.debug("LRO check for %s skipped: %s", job_id, e)
 
         if job.status == "completed":
+            # Clone before replacing canonical gs:// URIs with transient signed HTTPS URLs
+            job = job.model_copy(deep=True)
             signed_burned = self.get_artifact_signed_url(
-                job_id, "burned_in_video"
+                job_id, "burned_in_video", job_dto=job
             )
             signed_toggle = self.get_artifact_signed_url(
-                job_id, "toggleable_video"
+                job_id, "toggleable_video", job_dto=job
             )
-            signed_source = self.get_artifact_signed_url(job_id, "source_video")
-            signed_vtt = self.get_artifact_signed_url(job_id, "vtt")
-            signed_srt = self.get_artifact_signed_url(job_id, "srt")
+            signed_source = self.get_artifact_signed_url(
+                job_id, "source_video", job_dto=job
+            )
+            signed_vtt = self.get_artifact_signed_url(
+                job_id, "vtt", job_dto=job
+            )
+            signed_srt = self.get_artifact_signed_url(
+                job_id, "srt", job_dto=job
+            )
 
             if signed_burned:
                 job.burned_in_video = signed_burned
@@ -1650,25 +1658,9 @@ class SubtitleService:
             job_id, srt_path, target_filename=f"subtitles_{rev}.srt"
         )
 
-        source_local = self.get_artifact_file(job_id, "source_video")
-        if source_local and os.path.exists(source_local):
-            toggle_local = os.path.join(
-                job_dir, f"output_toggleable_{rev}.mp4"
-            )
-            try:
-                self.engine.embed_soft_subtitles_ffmpeg(
-                    source_local, vtt_path, toggle_local
-                )
-                toggle_gcs = self._upload_artifact_to_gcs(
-                    job_id,
-                    toggle_local,
-                    target_filename=f"output_toggleable_{rev}.mp4",
-                )
-                job.default_toggleable_video = toggle_gcs or toggle_local
-            except Exception as e:
-                logger.warning("Soft subtitle re-embed skipped: %s", e)
-
-            if reburn_video:
+        if reburn_video:
+            source_local = self.get_artifact_file(job_id, "source_video")
+            if source_local and os.path.exists(source_local):
                 burned_local = os.path.join(
                     job_dir, f"output_burned_in_{rev}.mp4"
                 )
@@ -1692,11 +1684,11 @@ class SubtitleService:
                 job.burned_in_video = burned_gcs or burned_local
                 job.burn_subtitles = True
                 job.processed_video_url = job.burned_in_video
-        elif reburn_video:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Source video is not available to re-burn MP4.",
-            )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Source video is not available to re-burn MP4.",
+                )
 
         job.subtitles_vtt = vtt_gcs or vtt_path
         job.subtitle_url = vtt_gcs or vtt_path
@@ -1850,8 +1842,10 @@ class SubtitleService:
                 content_type = "video/mp4"
             elif filename.endswith(".vtt"):
                 content_type = "text/vtt"
+                blob.cache_control = "no-cache, max-age=0"
             elif filename.endswith(".srt"):
                 content_type = "application/x-subrip"
+                blob.cache_control = "no-cache, max-age=0"
             elif filename.endswith(".jpg") or filename.endswith(".jpeg"):
                 content_type = "image/jpeg"
             elif filename.endswith(".png"):

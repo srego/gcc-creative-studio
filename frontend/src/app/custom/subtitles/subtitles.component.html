@@ -462,7 +462,7 @@
         <div class="flex items-center gap-2">
           <mat-icon class="text-amber-400 text-base shrink-0">sync_problem</mat-icon>
           <span>
-            Caption text was edited below—this MP4 still shows <strong>v{{ burnedRevision() }}</strong> frames. Click <strong>Re-Burn MP4</strong> to bake your updated text into the video.
+            Caption text was edited below. <strong>Both .VTT and .SRT downloads updated automatically</strong>, but this MP4 video still shows <strong>v{{ burnedRevision() }}</strong> frames—click <strong>Re-Burn MP4 Now</strong> to re-encode the video.
           </span>
         </div>
         <button
@@ -546,7 +546,7 @@
               {{ enableDynamicSubtitles() ? 'Dynamic Subtitles & Caption Editor' : 'Caption Cues Editor' }}
             </div>
             <div class="text-xs text-neutral-400">
-              {{ enableDynamicSubtitles() ? 'Toggleable soft captions (.vtt / .srt)—edits below update the live preview immediately.' : 'Edit caption cues below and click Re-Burn MP4 to update the burned video above.' }}
+              {{ enableDynamicSubtitles() ? 'Edits made to any caption below automatically update the live preview AND both downloadable .VTT and .SRT files.' : 'Edit caption cues below and click Re-Burn MP4 to update the burned video above.' }}
             </div>
           </div>
         </div>
@@ -614,19 +614,22 @@
             </span>
           </div>
 
-          <!-- Save Actions right inside the editor bar -->
+          <!-- Live Auto-Sync Badge + Optional MP4 Re-Burn Action -->
           <div class="flex flex-wrap items-center gap-2">
-            <button
-              *ngIf="cuesDirty()"
-              type="button"
-              [disabled]="isSavingCues() || isReburningVideo()"
-              (click)="saveCueEdits(false)"
-              class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+            <span
+              *ngIf="autoSyncState() === 'syncing'"
+              class="px-2.5 py-1 rounded-md bg-indigo-500/20 text-indigo-200 border border-indigo-500/30 text-xs font-medium flex items-center gap-1.5"
             >
-              <mat-icon *ngIf="isSavingCues()" class="text-sm animate-spin">sync</mat-icon>
-              <mat-icon *ngIf="!isSavingCues()" class="text-sm">save</mat-icon>
-              <span>{{ isSavingCues() ? 'Updating Files...' : 'Save .VTT & .SRT Changes' }}</span>
-            </button>
+              <mat-icon class="text-xs animate-spin">sync</mat-icon>
+              <span>Auto-syncing .VTT &amp; .SRT...</span>
+            </span>
+            <span
+              *ngIf="autoSyncState() === 'synced'"
+              class="px-2.5 py-1 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-medium flex items-center gap-1.5"
+            >
+              <mat-icon class="text-xs">check_circle</mat-icon>
+              <span>Auto-saved to .VTT &amp; .SRT</span>
+            </span>
 
             <button
               *ngIf="(cuesDirty() || burnedNeedsReburn()) && enableBurnedInVideo()"
@@ -637,7 +640,7 @@
             >
               <mat-icon *ngIf="isReburningVideo()" class="text-sm animate-spin">sync</mat-icon>
               <mat-icon *ngIf="!isReburningVideo()" class="text-sm">movie_filter</mat-icon>
-              <span>{{ isReburningVideo() ? 'Re-Burning MP4...' : 'Save & Re-Burn MP4' }}</span>
+              <span>{{ isReburningVideo() ? 'Re-Burning MP4...' : 'Re-Burn MP4 Video' }}</span>
             </button>
           </div>
         </div>
@@ -664,9 +667,10 @@
 
                 <span
                   *ngIf="isCueModified(i)"
-                  class="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold"
+                  [ngClass]="isCueUnsaved(i) ? 'bg-indigo-500/20 text-indigo-200 border-indigo-500/30' : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'"
+                  class="px-2 py-0.5 rounded-md border text-xs font-semibold"
                 >
-                  Unsaved edit
+                  {{ isCueUnsaved(i) ? 'Syncing...' : 'Edited · In .VTT & .SRT' }}
                 </span>
               </div>
 
@@ -676,7 +680,7 @@
                   type="button"
                   (click)="revertCue(i, cueTextarea)"
                   class="px-2 py-0.5 rounded-md bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs cursor-pointer"
-                  title="Revert this cue to last saved text"
+                  title="Restore original generated caption text"
                 >
                   Undo
                 </button>
@@ -701,37 +705,38 @@
         </div>
       </div>
 
-      <!-- Section C: Explicit File Sync Status + .VTT / .SRT Downloads (Bottom of Same Card!) -->
+      <!-- Section C: Always-Visible Explicit Sync Banner + .VTT & .SRT Downloads -->
       <div *ngIf="enableDynamicSubtitles()" class="flex flex-col gap-3 pt-1">
-        <!-- State 1: Unsaved Edits Pending -->
+        <!-- State 0 (Default before edits): Explicit upfront explanation -->
         <div
-          *ngIf="cuesDirty()"
-          class="p-3 rounded-xl bg-amber-950/50 border border-amber-500/40 text-amber-200 text-xs flex flex-wrap items-center justify-between gap-2"
+          *ngIf="autoSyncState() === 'initial'"
+          class="p-3 rounded-xl bg-indigo-950/35 border border-indigo-500/25 text-indigo-200 text-xs flex items-center gap-2.5"
         >
-          <div class="flex items-center gap-2">
-            <mat-icon class="text-amber-400 text-base shrink-0">edit_notifications</mat-icon>
-            <span>
-              <strong>{{ modifiedCueCount() }} cue(s) edited</strong>—click <strong>Save .VTT &amp; .SRT Changes</strong> (or click Download below to auto-save &amp; download immediately).
-            </span>
-          </div>
-          <button
-            type="button"
-            [disabled]="isSavingCues()"
-            (click)="saveCueEdits(false)"
-            class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold cursor-pointer shrink-0"
-          >
-            {{ isSavingCues() ? 'Saving...' : 'Save .VTT & .SRT Changes' }}
-          </button>
+          <mat-icon class="text-indigo-400 text-base shrink-0">bolt</mat-icon>
+          <span>
+            <strong>Automatic File Sync:</strong> Any edits you type into the caption boxes above <strong>automatically update both the WebVTT (.vtt) and SubRip (.srt) files</strong> downloaded below—no manual save needed.
+          </span>
         </div>
 
-        <!-- State 2: Saved & Verified Updated Revision -->
+        <!-- State 1 (Actively typing): Syncing in progress -->
         <div
-          *ngIf="!cuesDirty() && sidecarRevision() > 1"
-          class="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2"
+          *ngIf="autoSyncState() === 'syncing'"
+          class="p-3 rounded-xl bg-indigo-950/50 border border-indigo-500/40 text-indigo-200 text-xs flex items-center gap-2.5"
+        >
+          <mat-icon class="text-indigo-400 text-base animate-spin shrink-0">sync</mat-icon>
+          <span>
+            <strong>Syncing edits automatically...</strong> Updating both downloadable <strong>WebVTT (.vtt)</strong> and <strong>SubRip (.srt)</strong> files.
+          </span>
+        </div>
+
+        <!-- State 2 (Edited & Auto-Synced): Green explicit confirmation -->
+        <div
+          *ngIf="autoSyncState() === 'synced'"
+          class="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2.5"
         >
           <mat-icon class="text-emerald-400 text-base shrink-0">check_circle</mat-icon>
           <span>
-            <strong>Downloadable .VTT &amp; .SRT files updated!</strong> (Revision <strong>v{{ sidecarRevision() }}</strong> · Saved at {{ lastSavedAt() }})
+            <strong>Both .VTT and .SRT downloads include your edits!</strong> ({{ editedFromOriginalCount() }} cue{{ editedFromOriginalCount() === 1 ? '' : 's' }} customized · Auto-saved at {{ lastSavedAt() }})
           </span>
         </div>
 
@@ -745,7 +750,7 @@
             <span class="flex items-center gap-2">
               <mat-icon class="text-indigo-400 text-base">description</mat-icon>
               <span>
-                {{ cuesDirty() ? 'Auto-Save & Download .VTT' : (sidecarRevision() > 1 ? 'Download Updated .VTT (v' + sidecarRevision() + ')' : 'Download WebVTT (.vtt)') }}
+                {{ editedFromOriginalCount() > 0 ? 'Download Edited WebVTT (.vtt)' : 'Download WebVTT (.vtt)' }}
               </span>
             </span>
             <mat-icon class="text-neutral-400 text-base">download</mat-icon>
@@ -759,7 +764,7 @@
             <span class="flex items-center gap-2">
               <mat-icon class="text-indigo-400 text-base">subtitles</mat-icon>
               <span>
-                {{ cuesDirty() ? 'Auto-Save & Download .SRT' : (sidecarRevision() > 1 ? 'Download Updated .SRT (v' + sidecarRevision() + ')' : 'Download SubRip (.srt)') }}
+                {{ editedFromOriginalCount() > 0 ? 'Download Edited SubRip (.srt)' : 'Download SubRip (.srt)' }}
               </span>
             </span>
             <mat-icon class="text-neutral-400 text-base">download</mat-icon>
