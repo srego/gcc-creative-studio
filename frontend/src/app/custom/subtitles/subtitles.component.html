@@ -655,6 +655,20 @@
           </div>
         </div>
 
+        <!-- Upfront Instruction Right Under "Edit Caption Cues (N)" -->
+        <div
+          *ngIf="!cuesDirty() && sidecarRevision() === 1"
+          class="p-3 rounded-xl bg-neutral-900/70 border border-neutral-800 text-neutral-300 text-xs flex items-center gap-2.5"
+        >
+          <mat-icon class="text-indigo-400 text-base shrink-0">info</mat-icon>
+          <span *ngIf="enableDynamicSubtitles()">
+            <strong>How caption editing works:</strong> Edit any text box below, then click <strong>Save Caption Changes</strong> to update <strong>both</strong> the <strong>WebVTT (.vtt)</strong> and <strong>SubRip (.srt)</strong> files before downloading.
+          </span>
+          <span *ngIf="!enableDynamicSubtitles()">
+            <strong>How caption editing works:</strong> Edit any text box below, then click <strong>Save &amp; Re-Burn MP4</strong> to update your burned-in video before downloading.
+          </span>
+        </div>
+
         <!-- Scrollable Cue Rows -->
         <div class="h-[310px] overflow-y-auto pr-1 flex flex-col gap-2">
           <div
@@ -752,17 +766,6 @@
           <mat-icon class="text-emerald-400 text-base shrink-0">check_circle</mat-icon>
           <span>
             <strong>Changes saved (Revision v{{ sidecarRevision() }} · {{ lastSavedAt() }}):</strong> Both the <strong>WebVTT (.vtt)</strong> and <strong>SubRip (.srt)</strong> downloads below have been updated with your changes.
-          </span>
-        </div>
-
-        <!-- State 0 (Initial clean state): Clear upfront instruction -->
-        <div
-          *ngIf="!cuesDirty() && sidecarRevision() === 1"
-          class="p-3 rounded-xl bg-neutral-900/70 border border-neutral-800 text-neutral-300 text-xs flex items-center gap-2.5"
-        >
-          <mat-icon class="text-indigo-400 text-base shrink-0">info</mat-icon>
-          <span>
-            <strong>How caption editing works:</strong> Edit any text box above, then click <strong>Save Caption Changes</strong> to update <strong>both</strong> the <strong>WebVTT (.vtt)</strong> and <strong>SubRip (.srt)</strong> files before downloading.
           </span>
         </div>
 
